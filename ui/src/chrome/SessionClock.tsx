@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { etParts } from "../render/chart/barBucket";
 import { nextSessionTransition, sessionAt, type Session } from "../render/chart/sessions";
 import { useTheme } from "./ThemeProvider";
 import type { Palette } from "../render/palette";
@@ -16,18 +17,44 @@ const SESSION_ANNOUNCEMENT: Partial<Record<Session, string>> = {
   pre: "Pre-market is now open.",
   rth: "Market is now open.",
 };
+const SESSION_VOICE_LOCK = "etape.session-voice";
+const SESSION_VOICE_STORAGE_KEY = "etape.sessionVoice";
 
-function announceSession(session: Session): void {
+function announceSession(session: Session, tsMs: number): void {
   const text = SESSION_ANNOUNCEMENT[session];
   if (!text || typeof SpeechSynthesisUtterance === "undefined") return;
-  const synth = window.speechSynthesis;
-  if (!synth) return;
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.voice = synth.getVoices().find((voice) => voice.name === "Google US English" && voice.lang === "en-US") ?? null;
-  utterance.lang = "en-US";
-  utterance.rate = 0.90;
-  utterance.pitch = 1.05;
-  synth.speak(utterance);
+  const speak = () => {
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+    const utterance = new SpeechSynthesisUtterance(text);
+    const voices = synth.getVoices().filter((voice) => voice.lang === "en-US");
+    utterance.voice = voices.find((voice) => voice.name === "Google US English Female")
+      ?? voices.find((voice) => voice.name === "Google US English")
+      ?? voices.find((voice) => /female|zira/i.test(voice.name))
+      ?? null;
+    utterance.lang = "en-US";
+    utterance.rate = 0.90;
+    utterance.pitch = 1.05;
+    synth.speak(utterance);
+  };
+  if (!navigator.locks || typeof navigator.locks.request !== "function") { speak(); return; }
+
+  const p = etParts(tsMs);
+  const token = `${p.y}-${p.mo.toString().padStart(2, "0")}-${p.d.toString().padStart(2, "0")}:${session}`;
+  try {
+    void navigator.locks.request(SESSION_VOICE_LOCK, () => {
+      try {
+        if (localStorage.getItem(SESSION_VOICE_STORAGE_KEY) === token) return;
+        localStorage.setItem(SESSION_VOICE_STORAGE_KEY, token);
+      } catch {
+        speak();
+        return;
+      }
+      speak();
+    }).catch(() => speak());
+  } catch {
+    speak();
+  }
 }
 
 function formatSessionCountdown(ms: number): string {
@@ -67,9 +94,9 @@ export function SessionClock(): JSX.Element {
   const session = sessionAt(now);
   const previousSession = useRef<Session | null>(null);
   useEffect(() => {
-    if (previousSession.current !== null && previousSession.current !== session) announceSession(session);
+    if (previousSession.current !== null && previousSession.current !== session) announceSession(session, now);
     previousSession.current = session;
-  }, [session]);
+  }, [now, session]);
   const transition = nextSessionTransition(now);
   const countdown = formatSessionCountdown(transition.atMs - now);
   const nextLabel = SESSION_LABEL[transition.session];

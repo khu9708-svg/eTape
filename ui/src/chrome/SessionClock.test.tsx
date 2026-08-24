@@ -48,7 +48,7 @@ describe("SessionClock", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-09T07:59:59Z"));
     const speak = vi.fn();
-    const voice = { name: "Google US English", lang: "en-US" } as SpeechSynthesisVoice;
+    const voice = { name: "Google US English Female", lang: "en-US" } as SpeechSynthesisVoice;
     class FakeUtterance {
       voice: SpeechSynthesisVoice | null = null;
       lang = "";
@@ -68,6 +68,36 @@ describe("SessionClock", () => {
     vi.setSystemTime(new Date("2026-07-09T13:29:59Z"));
     act(() => { vi.advanceTimersByTime(1000); });
     expect(speak).toHaveBeenNthCalledWith(2, expect.objectContaining({ text: "Market is now open." }));
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("announces one shared transition once across workspaces", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-09T07:59:59Z"));
+    const speak = vi.fn();
+    const voice = { name: "Google US English Female", lang: "en-US" } as SpeechSynthesisVoice;
+    class FakeUtterance {
+      voice: SpeechSynthesisVoice | null = null;
+      lang = "";
+      rate = 1;
+      pitch = 1;
+      constructor(readonly text: string) {}
+    }
+    const request = vi.fn(async (_name: string, callback: () => void) => callback());
+    const previousLocks = navigator.locks;
+    Object.defineProperty(navigator, "locks", { configurable: true, value: { request } });
+    localStorage.removeItem("etape.sessionVoice");
+    vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
+    vi.stubGlobal("speechSynthesis", { getVoices: () => [voice], speak });
+
+    const { unmount } = render(<ThemeProvider><><SessionClock /><SessionClock /></></ThemeProvider>);
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(speak).toHaveBeenCalledTimes(1);
+
+    unmount();
+    localStorage.removeItem("etape.sessionVoice");
+    Object.defineProperty(navigator, "locks", { configurable: true, value: previousLocks });
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });

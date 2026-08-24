@@ -20,6 +20,10 @@ _Avoid_: Top header, app header, panel header
 A Top Bar time display showing the remaining time until the next scheduled market-session phase.
 _Avoid_: Next session countdown, market open timer
 
+**Session Transition Announcement**:
+A spoken notification emitted once per market-session phase transition across all eTape workspaces sharing a browser profile. A workspace opened after the transition does not replay it; if cross-workspace coordination is unavailable, each workspace may emit the notification.
+_Avoid_: Market open reminder
+
 **Tab**:
 A selectable, draggable panel selector within a multi-panel Panel Group.
 _Avoid_: Panel header
