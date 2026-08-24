@@ -1,3 +1,5 @@
+import { WorkspaceService } from "../gen/wails/github.com/earlisreal/eTape/engine/internal/uiapi/index.js";
+
 const WORKSPACE_ID_RE = /^[a-z0-9-]{1,64}$/;
 const WORKSPACE_WINDOW_POPUP = "popup=yes";
 const NEWS_WINDOW_TARGET = "etape-news-reader";
@@ -18,6 +20,11 @@ export function workspaceWindowTarget(id: string): string {
   return `etape-workspace-${id}`;
 }
 
+export function isNativeWindow(): boolean {
+  const candidate = window as typeof window & { chrome?: { webview?: unknown }; _wails?: { environment?: { OS?: string } } };
+  return !!candidate.chrome?.webview || candidate._wails?.environment?.OS === "windows";
+}
+
 export function workspaceUrl(id: string, href = window.location.href): string {
   const target = new URL(href);
   target.search = `?workspace=${encodeURIComponent(id)}`;
@@ -33,7 +40,17 @@ export function workspaceWindowFeatures(): string {
   return `${WORKSPACE_WINDOW_POPUP},width=${width},height=${height}`;
 }
 
+export function openWorkspaceWindowNative(id: string): Promise<void> {
+  return WorkspaceService.OpenWorkspace({ workspaceId: id }).then((result) => {
+    if (String(result.status) !== "accepted") throw new Error(result.reason ?? "Could not open workspace.");
+  });
+}
+
 export function openWorkspaceWindow(id: string): Window | null {
+  if (isNativeWindow()) {
+    void openWorkspaceWindowNative(id).catch(() => {});
+    return null;
+  }
   return window.open(workspaceUrl(id), workspaceWindowTarget(id), workspaceWindowFeatures());
 }
 

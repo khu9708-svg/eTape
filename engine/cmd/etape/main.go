@@ -37,6 +37,7 @@ import (
 	"github.com/earlisreal/eTape/engine/internal/md"
 	"github.com/earlisreal/eTape/engine/internal/news"
 	"github.com/earlisreal/eTape/engine/internal/openbrowser"
+	"github.com/earlisreal/eTape/engine/internal/profile"
 	"github.com/earlisreal/eTape/engine/internal/quota"
 	"github.com/earlisreal/eTape/engine/internal/scan"
 	"github.com/earlisreal/eTape/engine/internal/session"
@@ -45,8 +46,10 @@ import (
 	"github.com/earlisreal/eTape/engine/internal/stockinfo"
 	"github.com/earlisreal/eTape/engine/internal/store"
 	"github.com/earlisreal/eTape/engine/internal/synth"
+	"github.com/earlisreal/eTape/engine/internal/uiapi"
 	"github.com/earlisreal/eTape/engine/internal/uihub"
 	"github.com/earlisreal/eTape/engine/internal/uihub/wsmsg"
+	"github.com/earlisreal/eTape/engine/internal/uistate"
 	"github.com/earlisreal/eTape/engine/internal/venueadmin"
 	"github.com/earlisreal/eTape/engine/internal/venueprobe"
 	"github.com/earlisreal/eTape/engine/internal/venueseed"
@@ -57,12 +60,27 @@ import (
 // openLogFile opens path for appending, creating both the file and its
 // parent directory if missing. Logging is set up before config load (and
 // thus before the store's own db-dir MkdirAll further down in boot), so the
-// default log path's ~/.eTape directory may not exist yet.
+// default profile log directory may not exist yet.
 func openLogFile(path string) (*os.File, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
 	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+}
+
+func envBool(name string) bool {
+	v, err := strconv.ParseBool(os.Getenv(name))
+	return err == nil && v
+}
+
+type bootOptions struct {
+	onListening      func(addr string)
+	onHub            func(*uihub.Server)
+	onQuerySource    func(uiapi.QuerySources)
+	onWorkspaceStore func(uistate.Persistence) error
+	onMutationSource func(uiapi.MutationSources)
+	noLegacyHTTP     bool
+	onReady          func()
 }
 
 // boot runs the full engine boot sequence -- flags, config, store/md-core/
@@ -80,11 +98,17 @@ func openLogFile(path string) (*os.File, error) {
 // entrypoint uses it to learn the address for its "Open eTape" menu action
 // without duplicating any config-resolution logic.
 func boot(ctx context.Context, onListening func(addr string)) (code int, restart bool, nextArgs []string) {
-	home, _ := os.UserHomeDir()
-	cfgPath := flag.String("config", filepath.Join(home, ".eTape", "config.toml"), "path to config.toml")
+	return bootWithOptions(ctx, bootOptions{onListening: onListening})
+}
+
+func bootWithOptions(ctx context.Context, options bootOptions) (code int, restart bool, nextArgs []string) {
+	cfgPath := flag.String("config", "", "path to config.toml (defaults inside the selected profile)")
 	dist := flag.String("dist", "", "serve built UI from this dir (overrides [uihub].dist_dir)")
 	demo := flag.Bool("demo", false, "run the built-in synthetic demo market (no OpenD/broker needed)")
 	demoSeed := flag.Int64("demo-seed", 0, "PRNG seed for -demo; 0 = random per launch")
+	profileKind := flag.String("profile", os.Getenv("ETAPE_PROFILE"), "runtime profile: development, test, prototype, replay, demo, server, user, or migration")
+	dataRoot := flag.String("data-root", os.Getenv("ETAPE_DATA_ROOT"), "root directory for an isolated runtime profile")
+	allowRealProfile := flag.Bool("allow-real-profile", envBool("ETAPE_ALLOW_REAL_PROFILE"), "explicitly allow the real %USERPROFILE%\\.eTape profile")
 	noOpen := flag.Bool("no-open", false, "do not auto-open the default browser to the UI")
 	ownedBrowserPID := flag.Int("owned-browser-pid", 0, "internal: PID of the startup Chrome app handed across restart")
 	ownedBrowserStart := flag.Uint64("owned-browser-start", 0, "internal: startup time token of the handed-off Chrome app")
@@ -93,6 +117,20 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 	logPath := flag.String("log", "", "also write logs to this file")
 	logLevel := flag.String("log-level", os.Getenv("SLOG_LEVEL"), "log level: debug, info, warn, error (default SLOG_LEVEL env)")
 	flag.Parse()
+
+	requestedKind := profile.Kind(*profileKind)
+	if *demo {
+		requestedKind = profile.KindDemo
+	}
+	profilePaths, err := profile.Resolve(profile.Request{
+		Kind: requestedKind, Root: *dataRoot, ConfigPath: *cfgPath, LogPath: *logPath,
+		AllowReal: *allowRealProfile,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "etape profile: %v\n", err)
+		return 1, false, nil
+	}
+	*cfgPath = profilePaths.ConfigPath
 
 	// ETAPE_NO_OPEN suppresses auto-open, same as -no-open, so agent/CI boots
 	// stay headless without every launch path remembering the flag.
@@ -103,12 +141,12 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 	// Destination policy: logToStderr and defaultLogPath are supplied by
 	// logdest_tray.go / logdest_default.go (chosen by the "tray" build tag).
 	// The tray (windowsgui) build has no usable stderr, so it falls back to
-	// a file under ~/.eTape when -log isn't given; the console build has a
+	// a file under the resolved profile when -log isn't given; the console build has a
 	// real stderr and stays opt-in, exactly as before this split existed.
 	logDest := *logPath
 	explicitLog := logDest != ""
 	if logDest == "" {
-		logDest = defaultLogPath()
+		logDest = defaultLogPath(profilePaths.LogPath)
 	}
 
 	var writers []io.Writer
@@ -170,28 +208,16 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 		cfg.Gate.Venue = map[string]config.GateVenue{
 			"sim-paper": {MaxOrderValue: 100000, MaxPositionValue: 100000, MaxPositionShares: 100000, MaxOpenOrders: 50},
 		}
-		demoDir, err := os.MkdirTemp("", "etape-demo-*")
-		if err != nil {
-			log.Error("create demo temp dir", "err", err)
-			return 1, false, nil
-		}
-		cfg.Store.DBPath = filepath.Join(demoDir, "demo.db")
 	} else {
-		// First run of a live boot with no config.toml: seed one so a fresh
+		// First run of a non-demo boot with no config.toml: seed one so a fresh
 		// install comes up with a ready-to-use paper sim practice venue
-		// instead of zero configured venues. Gated to live only
-		// (*replayDay == "") -- -demo (above) has its own injected sim venue
-		// and its own temp config, and an explicit -replay forces every venue
-		// to sim regardless, so neither needs (or should trigger) a write to
-		// the real ~/.eTape/config.toml.
-		if true {
-			if seeded, serr := config.SeedDefaultIfMissing(*cfgPath); serr != nil {
-				log.Warn("seed first-run config (continuing with empty venues)", "path", *cfgPath, "err", serr)
-			} else if seeded {
-				log.Info("first run: seeded config with a paper sim practice venue", "path", *cfgPath)
-			}
+		// instead of zero configured venues. The resolved profile keeps this
+		// write isolated unless the caller explicitly opts into the user root.
+		if seeded, serr := config.SeedDefaultIfMissing(*cfgPath); serr != nil {
+			log.Warn("seed first-run config (continuing with empty venues)", "path", *cfgPath, "err", serr)
+		} else if seeded {
+			log.Info("first run: seeded config with a paper sim practice venue", "path", *cfgPath)
 		}
-		var err error
 		cfg, err = config.Load(*cfgPath)
 		if err != nil {
 			log.Error("load config", "err", err)
@@ -215,7 +241,13 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 	}
 	dbPath := cfg.Store.DBPath
 	if dbPath == "" {
-		dbPath = filepath.Join(home, ".eTape", "etape.db")
+		dbPath = profilePaths.DBPath
+	} else if !filepath.IsAbs(dbPath) {
+		dbPath = filepath.Join(filepath.Dir(*cfgPath), dbPath)
+	}
+	if err := profilePaths.ValidateDataPath(dbPath); err != nil {
+		log.Error("unsafe store path", "err", err)
+		return 1, false, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		log.Error("make db dir", "err", err)
@@ -263,7 +295,7 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 	var restartRequested atomic.Bool
 	requestRestart := func() { restartRequested.Store(true); stop(uihub.ErrRestarting) }
 	var startupBrowser *openbrowser.OwnedBrowser
-	if *ownedBrowserPID != 0 || *ownedBrowserStart != 0 || *ownedBrowserProfile != "" {
+	if !options.noLegacyHTTP && (*ownedBrowserPID != 0 || *ownedBrowserStart != 0 || *ownedBrowserProfile != "") {
 		var adoptErr error
 		adoptURL := *ownedBrowserURL
 		if adoptURL == "" {
@@ -304,6 +336,13 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 		log.Error("open store", "err", err)
 		return 1, false, nil
 	}
+	if options.onWorkspaceStore != nil {
+		if err := options.onWorkspaceStore(st); err != nil {
+			log.Error("configure workspace state", "err", err)
+			_ = st.Close()
+			return 1, false, nil
+		}
+	}
 	if cfg.Store.RetentionDays > 0 {
 		cutoff := bars10sRetentionCutoff(time.Now(), cfg.Store.RetentionDays)
 		rows, pruneErr := st.PruneBars10sBefore(cutoff)
@@ -331,7 +370,10 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 
 	// base carries the launch flags a mode-switch relaunch must preserve
 	// (see childArgs, Task 1) -- built once here so both closures share it.
-	base := baseFlags{ConfigPath: *cfgPath, DistDir: *dist, LogPath: *logPath}
+	base := baseFlags{
+		ConfigPath: *cfgPath, DistDir: *dist, LogPath: *logPath,
+		Profile: *profileKind, DataRoot: *dataRoot, AllowRealProfile: *allowRealProfile,
+	}
 
 	// startDemo relaunches into -demo.
 	startDemo := func() error {
@@ -380,7 +422,7 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 	// --- exec subsystem (Recover -> Run) ---
 	var credsFile creds.File
 	if live {
-		if credsFile, err = creds.Load(creds.DefaultPath()); err != nil {
+		if credsFile, err = creds.Load(profilePaths.CredentialsPath); err != nil {
 			log.Warn("load creds (non-sim venues will fail)", "err", err)
 			credsFile = creds.File{}
 		}
@@ -466,8 +508,8 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 	}
 
 	// --- uihub (listening BEFORE OpenD is dialed) ---
-	venueAdm := venueadmin.New(*cfgPath, creds.DefaultPath(), config.VenueConfig{Venues: cfg.Venues, Gate: cfg.Gate})
-	venueProbe := venueprobe.New(creds.DefaultPath(), cfg.OpenD.Addr(), uihubClk)
+	venueAdm := venueadmin.New(*cfgPath, profilePaths.CredentialsPath, config.VenueConfig{Venues: cfg.Venues, Gate: cfg.Gate})
+	venueProbe := venueprobe.New(profilePaths.CredentialsPath, cfg.OpenD.Addr(), uihubClk)
 	hub, srv := uihub.New(uihubClk, uihub.Config{
 		Venues: venueMetas(cfg), Global: uihub.GlobalLimits{
 			MaxDayLoss: cfg.Gate.Global.MaxDayLoss, MaxSymbolPositionValue: cfg.Gate.Global.MaxSymbolPositionValue,
@@ -477,7 +519,8 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 		Position: time.Duration(cfg.UIHub.PositionMs) * time.Millisecond,
 		Buf:      4096, TapeCap: cfg.UIHub.TapeSnapshot, NewsCap: 500, FillsCap: 1000, EventsCap: 500, TradesCap: 1000,
 		OutBuf: cfg.UIHub.OutboundQueue, DistDir: cfg.UIHub.DistDir,
-		Demo: *demo,
+		Demo:                 *demo,
+		DisableLegacyQueries: options.noLegacyHTTP,
 		OnConfigSet: func(key, value string) {
 			if key != "orderConfig" {
 				return
@@ -490,33 +533,44 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 			accountPoller.SetActiveVenue(venue)
 		},
 	}, execCore, st, core, venueAdm, venueProbe, restartInPlace, startDemo, locateProviders)
+	if options.onHub != nil {
+		options.onHub(srv)
+	}
+	if options.onQuerySource != nil {
+		options.onQuerySource(uiapi.QuerySources{Fills: st, Charts: hub, Locates: locateProviders, Clock: uihubClk})
+	}
 	hubDone := make(chan struct{})
 	go func() { defer close(hubDone); _ = hub.Run(ctx) }()
-	uiCtx, cancelUI := context.WithCancel(context.Background())
-	defer cancelUI()
-	httpSrv := &http.Server{
-		Addr: cfg.UIHub.Addr(), Handler: srv.Handler(), ReadHeaderTimeout: 5 * time.Second,
-		// BaseContext ties every accepted connection's r.Context() to uiCtx.
-		// Shutdown waits for Hub.Run to issue the clean close reason first, then
-		// cancels uiCtx before Server.Wait. This keeps a clean WebSocket close
-		// distinguishable from a connection context cancellation while still
-		// unblocking connections accepted after Hub.Run has returned.
-		BaseContext: func(net.Listener) context.Context { return uiCtx },
-	}
-	go func() {
-		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("uihub listen", "err", err)
+	var cancelUI context.CancelFunc
+	var httpSrv *http.Server
+	if !options.noLegacyHTTP {
+		uiCtx, cancel := context.WithCancel(context.Background())
+		cancelUI = cancel
+		defer cancelUI()
+		httpSrv = &http.Server{
+			Addr: cfg.UIHub.Addr(), Handler: srv.Handler(), ReadHeaderTimeout: 5 * time.Second,
+			// BaseContext ties every accepted connection's r.Context() to uiCtx.
+			// Shutdown waits for Hub.Run to issue the clean close reason first, then
+			// cancels uiCtx before Server.Wait. This keeps a clean WebSocket close
+			// distinguishable from a connection context cancellation while still
+			// unblocking connections accepted after Hub.Run has returned.
+			BaseContext: func(net.Listener) context.Context { return uiCtx },
 		}
-	}()
-	log.Info("uihub up", "addr", cfg.UIHub.Addr(), "dist", cfg.UIHub.DistDir)
-	if onListening != nil {
-		onListening(cfg.UIHub.Addr())
-	}
-	if !*noOpen {
-		var openErr error
-		startupBrowser, openErr = openbrowser.OpenOwned(browserURL(cfg.UIHub.Addr(), handlerLevel == slog.LevelDebug))
-		if openErr != nil {
-			log.Warn("open browser", "err", openErr)
+		go func() {
+			if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("uihub listen", "err", err)
+			}
+		}()
+		log.Info("uihub up", "addr", cfg.UIHub.Addr(), "dist", cfg.UIHub.DistDir)
+		if options.onListening != nil {
+			options.onListening(cfg.UIHub.Addr())
+		}
+		if !*noOpen {
+			var openErr error
+			startupBrowser, openErr = openbrowser.OpenOwned(browserURL(cfg.UIHub.Addr(), handlerLevel == slog.LevelDebug))
+			if openErr != nil {
+				log.Warn("open browser", "err", openErr)
+			}
 		}
 	}
 
@@ -524,8 +578,8 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 	// Gated on `live` (never -demo/-replay), the same gate config.
 	// SeedDefaultIfMissing above uses -- a synthetic/replayed feed never
 	// really connects to OpenD, so there is no real account list to probe,
-	// and demo's OpenD-free session must never write to the real
-	// ~/.eTape/config.toml. venueAdm is the same instance uihub's commands
+	// and demo's OpenD-free session must never write outside the resolved
+	// profile config.toml. venueAdm is the same instance uihub's commands
 	// already use, satisfying venueseed.Admin without a second config seam.
 	var seeder *venueseed.Seeder
 	if live {
@@ -761,13 +815,22 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 			}
 		}
 	}
-	startPollers(ctx, cfg, pollReq, demand, hub, uihubClk, st, wl, hasTZVenue(cfg), mmProbe, accountPoller, firstAlpacaAssetReader(vbs), backfillOne, !*demo, &scanWG)
+	mutationSources := startPollers(ctx, cfg, pollReq, demand, hub, uihubClk, st, wl, hasTZVenue(cfg), mmProbe, accountPoller, firstAlpacaAssetReader(vbs), backfillOne, !*demo, &scanWG)
+	mutationSources.Venues = venueAdm
+	mutationSources.Connect = venueProbeSource{probe: venueProbe}
+	mutationSources.Symbols = hub
+	if options.onMutationSource != nil {
+		options.onMutationSource(mutationSources)
+	}
 	mode := "live"
 	if *demo {
 		mode = "demo"
 	}
 	log.Info("etape ready", "version", buildinfo.Version, "mode", mode,
 		"uiAddr", cfg.UIHub.Addr(), "venues", len(cfg.Venues))
+	if options.onReady != nil {
+		options.onReady()
+	}
 
 	<-ctx.Done()
 
@@ -819,11 +882,13 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 	// could land after backfillWG.Wait() already observed zero, spawning an
 	// unwaited orch.Backfill goroutine that touches
 	// the store during/after st.Close().
-	<-hubDone  // Hub issued the clean close reason: no more handleEnsureDemand or new backfillWG.Add calls
-	cancelUI() // unblock every conn.run(), including a connection accepted after Hub.Run returned
-	shutCtx, cancelShut := context.WithTimeout(context.Background(), 5*time.Second)
-	_ = httpSrv.Shutdown(shutCtx)
-	cancelShut()
+	<-hubDone // Hub issued the clean close reason: no more handleEnsureDemand or new backfillWG.Add calls
+	if !options.noLegacyHTTP {
+		cancelUI() // unblock every conn.run(), including a connection accepted after Hub.Run returned
+		shutCtx, cancelShut := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = httpSrv.Shutdown(shutCtx)
+		cancelShut()
+	}
 	srv.Wait()        // every conn.run() returned: no more SetConfig via dispatch
 	scanWG.Wait()     // scan poller stopped: no more backfillWG.Add from pool admissions
 	backfillWG.Wait() // boot backfill workers stopped: no more Seed* into the core
@@ -1091,16 +1156,17 @@ type demandFeeder interface {
 // startQuota gates the quota poller: false in -demo, since the synthetic
 // requester answers Qot_GetSubInfo with the generic "no data" response
 // rather than a real subscription budget, so tracking it would be noise.
-func startPollers(ctx context.Context, cfg config.Config, r pollerRequester, demand demandFeeder, hub *uihub.Hub, clk clock.Clock, st *store.Store, wl *watchlist.List, hasTZ bool, mmProbe rttProber, accountHealth health.AccountHealthSource, assetReader stockInfoAssetReader, backfillOne func(string), startQuota bool, scanWG *sync.WaitGroup) {
+func startPollers(ctx context.Context, cfg config.Config, r pollerRequester, demand demandFeeder, hub *uihub.Hub, clk clock.Clock, st *store.Store, wl *watchlist.List, hasTZ bool, mmProbe rttProber, accountHealth health.AccountHealthSource, assetReader stockInfoAssetReader, backfillOne func(string), startQuota bool, scanWG *sync.WaitGroup) uiapi.MutationSources {
+	sources := uiapi.MutationSources{Config: st}
 	ssrResolver := ssr.New(st)
 	scanPoller := scan.New(cfg.Scan, r, hub, clk, demand, backfillOne, ssrResolver)
+	sources.Scanner = scanPoller
 	if raw, ok, err := st.GetConfig("scanner.filters.v1"); err == nil && ok {
 		var saved wsmsg.ScannerFilters
 		if json.Unmarshal([]byte(raw), &saved) == nil && scan.ValidateFilters(saved) == nil {
 			_ = scanPoller.SetFilters(saved)
 		}
 	}
-	hub.SetScanner(scanPoller)
 	newsPlan := func() news.SymbolPlan { return newsSymbolPlan(scanPoller.PoolSymbols(), hub.ActiveDemandSymbols()) }
 	symbols := func() []string { return newsPlan().All() }
 	scanWG.Add(1)
@@ -1112,7 +1178,8 @@ func startPollers(ctx context.Context, cfg config.Config, r pollerRequester, dem
 	if cfg.Watchlist.Enabled {
 		interval := time.Duration(cfg.Watchlist.PollMs) * time.Millisecond
 		wp := watchlist.New(wl, r, hub, clk, interval)
-		hub.SetWatchlist(watchlistAdapter{l: wl, p: wp})
+		adapter := watchlistAdapter{l: wl, p: wp}
+		sources.Watchlist = adapter
 		go func() { _ = wp.Run(ctx) }()
 	}
 	// health: mmProbe is the moomoo probe (real OpenD RTT in live/replay, a
@@ -1132,18 +1199,33 @@ func startPollers(ctx context.Context, cfg config.Config, r pollerRequester, dem
 	go func() {
 		_ = health.New(cfg.Health, hub, clk, mmProbe, nil, hasTZ, accountHealth, qsrc).Run(ctx)
 	}()
+	return sources
 }
 
-// watchlistAdapter satisfies uihub's watchlistCtl: Add/Remove on the List,
+// watchlistAdapter is the typed mutation source: Add/Remove on the List,
 // Poke on the Poller.
 type watchlistAdapter struct {
 	l *watchlist.List
 	p *watchlist.Poller
 }
 
-func (a watchlistAdapter) Add(s string) (bool, error) { return a.l.Add(s) }
-func (a watchlistAdapter) Remove(s string) bool       { return a.l.Remove(s) }
-func (a watchlistAdapter) Poke()                      { a.p.Poke() }
+func (a watchlistAdapter) AddWithRevision(s string) (bool, []string, uint64, error) {
+	return a.l.AddWithRevision(s)
+}
+func (a watchlistAdapter) RemoveWithRevision(s string) (bool, []string, uint64) {
+	return a.l.RemoveWithRevision(s)
+}
+func (a watchlistAdapter) Snapshot() ([]string, uint64) { return a.l.Snapshot() }
+func (a watchlistAdapter) Poke()                        { a.p.Poke() }
+
+type venueProbeSource struct{ probe *venueprobe.Prober }
+
+func (s venueProbeSource) TestConnection(ctx context.Context, broker, env, credName, keyID, secretKey, accountID string) (venueprobe.Result, error) {
+	if s.probe == nil {
+		return venueprobe.Result{}, uiapi.ErrMutationsUnavailable
+	}
+	return s.probe.TestConnection(ctx, broker, env, credName, keyID, secretKey, accountID), nil
+}
 
 func hasTZVenue(cfg config.Config) bool {
 	for _, v := range cfg.Venues {

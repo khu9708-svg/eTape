@@ -59,7 +59,7 @@ func TestServerWSSubscribeSnapshot(t *testing.T) {
 
 	srv := uihub.NewServer(h,
 		uihub.NewCommandsForTest(doerNoop{}, cfgNoop{}, indNoop{}, noopDemand{}, nil, func() uihub.Feed { return nil }, nil),
-		uihub.NewQueriesForTest(fillsNoop{}, clk),
+		nil,
 		uihub.ServerConfig{OutBuf: 32})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -87,14 +87,6 @@ func TestServerWSSubscribeSnapshot(t *testing.T) {
 	if mm["kind"] != "snapshot" || mm["topic"] != "exec.status" {
 		t.Fatalf("expected exec.status snapshot, got %v", mm)
 	}
-}
-
-type fillsNoop struct{}
-
-func (fillsNoop) QueryFills(string, int64, int64) ([]exec.FillRow, error) { return nil, nil }
-
-func (fillsNoop) ExportFills(context.Context, string, int64, int64) ([]exec.ExportFillRow, error) {
-	return nil, nil
 }
 
 // tinySndBufListener wraps a net.Listener and pins every accepted TCP
@@ -137,7 +129,7 @@ func TestServerOverflowDropDoesNotStallHub(t *testing.T) {
 
 	srv := uihub.NewServer(h,
 		uihub.NewCommandsForTest(doerNoop{}, cfgNoop{}, indNoop{}, noopDemand{}, nil, func() uihub.Feed { return nil }, nil),
-		uihub.NewQueriesForTest(fillsNoop{}, clk),
+		nil,
 		uihub.ServerConfig{OutBuf: 2}) // tiny outbound queue: a handful of updates overflow it
 
 	ts := httptest.NewUnstartedServer(srv.Handler())
@@ -171,7 +163,7 @@ func TestServerOverflowDropDoesNotStallHub(t *testing.T) {
 
 	// Flood sys.events: handlePub broadcasts unconditionally (no coalescing),
 	// so every call produces one frame to A. Once A's connection backs up,
-	// the Hub's overflow-drop path (conn.enqueue's `default: c.close()`)
+	// the Hub's explicit overflow-drop path (conn.enqueue returning false)
 	// fires for A synchronously, on the Hub's single event-loop goroutine.
 	floodDone := make(chan struct{})
 	go func() {
@@ -219,7 +211,7 @@ func TestServerStaticFileServing(t *testing.T) {
 	h, _ := uihub.NewHubForTest(clk)
 	srv := uihub.NewServer(h,
 		uihub.NewCommandsForTest(doerNoop{}, cfgNoop{}, indNoop{}, noopDemand{}, nil, func() uihub.Feed { return nil }, nil),
-		uihub.NewQueriesForTest(fillsNoop{}, clk),
+		nil,
 		uihub.ServerConfig{DistDir: dir, OutBuf: 32})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -259,7 +251,7 @@ func TestSpaHandlerServesFromFS(t *testing.T) {
 	h, _ := uihub.NewHubForTest(clk)
 	srv := uihub.NewServer(h,
 		uihub.NewCommandsForTest(doerNoop{}, cfgNoop{}, indNoop{}, noopDemand{}, nil, func() uihub.Feed { return nil }, nil),
-		uihub.NewQueriesForTest(fillsNoop{}, clk),
+		nil,
 		uihub.ServerConfig{OutBuf: 32})
 
 	ts := httptest.NewServer(srv.SpaHandlerForTest(fsys))
@@ -355,7 +347,7 @@ func TestServerWaitBlocksUntilConnectionDrains(t *testing.T) {
 	sc := &slowConfig{started: make(chan struct{}), release: make(chan struct{})}
 	srv := uihub.NewServer(h,
 		uihub.NewCommandsForTest(doerNoop{}, sc, indNoop{}, noopDemand{}, nil, func() uihub.Feed { return nil }, nil),
-		uihub.NewQueriesForTest(fillsNoop{}, clk),
+		nil,
 		uihub.ServerConfig{OutBuf: 32})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -486,7 +478,7 @@ func TestServerWaitBoundedByBaseContextAfterHubExit(t *testing.T) {
 
 	srv := uihub.NewServer(h,
 		uihub.NewCommandsForTest(doerNoop{}, cfgNoop{}, indNoop{}, noopDemand{}, nil, func() uihub.Feed { return nil }, nil),
-		uihub.NewQueriesForTest(fillsNoop{}, clk),
+		nil,
 		uihub.ServerConfig{OutBuf: 32})
 
 	// topCtx stands in for main.go's top-level shutdown ctx. Wiring it via

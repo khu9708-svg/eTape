@@ -32,7 +32,9 @@ Explicit skill paths are authoritative: verify and read the referenced `SKILL.md
 - Go types in `engine/internal/uihub/wsmsg` own WebSocket contract. `ui/src/gen/wsmsg.ts` is generated; never edit it.
 - TICKER ticks build exchange-time 10-second bars. One-minute K-lines feed larger intraday bars. Daily is fetched; weekly/monthly derive from daily.
 - OpenD uses raw TCP plus protobuf at configured address. Trade unlock occurs in OpenD GUI, not engine.
-- Credentials/config/database stay under `~/.eTape/`; never commit sensitive runtime data.
+- Credentials/config/database/logs stay under the selected runtime profile; only
+  an explicit user/migration opt-in may use `~/.eTape/`. Never commit sensitive
+  runtime data.
 - Every executed plan updates relevant READMEs when flow, interfaces, dependencies, invariants, or operations change.
 
 ## Commands
@@ -56,6 +58,20 @@ executable source of truth if the command lists drift. Small isolated changes
 may use proportional subsystem checks. Every handoff must list checks run and
 results, plus every skipped required check and its reason; hosted CI must still
 complete successfully.
+
+### Temporary Wails migration gate
+
+While any ticket under `.scratch/wails-v3-migration/issues/` remains unfinished,
+use focused engine/UI unit, integration, affected-package race, typecheck, and
+generated-contract checks. Defer synth/demo tests, `golangci-lint`, Playwright
+E2E, packaged/native Wails smoke, the ticket-07 high-volume soak checks (100
+WebView reloads, 100 lifecycle cycles, and four-stream ten-second stalls),
+unrelated UI golden/panel suites, and the full-repository race suite. Replace
+these with deterministic affected-package tests, targeted race tests, and
+affected UI tests; record every deferral in each handoff. When all Wails
+migration tickets are complete and the branch is ready to merge to `main`, run
+the full CI-equivalent Windows checklist plus every deferred E2E, package,
+golden, soak, and full-race check before merging.
 
 ## Live-order safety
 

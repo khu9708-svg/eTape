@@ -280,6 +280,7 @@ type ScannerRankPayload struct {
 	Rows        []ScannerRow   `json:"rows"`
 	Filters     ScannerFilters `json:"filters,omitempty"`
 	Baseline    bool           `json:"baseline,omitempty"`
+	Revision    uint64         `json:"revision,omitempty"`
 }
 
 type ScannerFilters struct {
@@ -316,6 +317,7 @@ type WatchlistRowsPayload struct {
 	RefreshedAt *string        `json:"refreshedAt" tstype:"string | null,required"`
 	Symbols     []string       `json:"symbols"`
 	Rows        []WatchlistRow `json:"rows"`
+	Revision    uint64         `json:"revision,omitempty"`
 }
 
 type WatchlistAddArgs struct {
@@ -562,6 +564,15 @@ type SetConfigArgs struct {
 
 type DeleteConfigArgs struct {
 	Key string `json:"key"`
+}
+
+// WorkspaceInvalidation is a low-rate revision hint. The owning Workspace
+// Stream receives document changes; an empty WorkspaceID broadcasts catalog
+// changes to every Workspace projection so no browser coordination is needed.
+type WorkspaceInvalidation struct {
+	WorkspaceID string `json:"workspaceId,omitempty"`
+	Kind        string `json:"kind"`
+	Revision    int64  `json:"revision"`
 }
 
 type SetScannerFiltersArgs struct {

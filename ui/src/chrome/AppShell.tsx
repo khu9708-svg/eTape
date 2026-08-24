@@ -33,15 +33,17 @@ import { useOrderCommands } from "./exec/useOrderCommands";
 import { useOrderConfig } from "./exec/useOrderConfig";
 import { useHotkeys } from "./exec/useHotkeys";
 import { useAutoUnlockOnStartup } from "./exec/useAutoUnlockOnStartup";
+import { Events } from "@wailsio/runtime";
 import { useSoundWiring } from "../sound/useSoundWiring";
 import { NewWindowModal } from "./NewWindowModal";
-import { mutateWindows, readWindows } from "./catalogs";
-import { openWorkspaceWindow } from "./windows";
+import { readWindows } from "./catalogs";
+import { isNativeWindow, openWorkspaceWindow, workspaceWindowTarget } from "./windows";
 import { planDemoEntry, planDemoRevert } from "./demoTransition";
 import { resolveVenue } from "./exec/venueSelection";
 import { PanelHeaderTab } from "./PanelHeaderTab";
 import { PanelHeaderHostProvider } from "./panels/headerSlot";
 import { PanelSymbolRuntime, planScannerSync, rankScannerRows, readScannerSort, ScannerSyncRuntime, type ScannerSyncPanelState, type ScannerSyncPlan } from "./scannerSync";
+import { completeDurableWorkspaceClose, parseWorkspaceCloseRequest, WORKSPACE_CLOSE_REQUESTED } from "./workspaceClose";
 
 // Task 3: permanent "don't show again" flag for the first-run venue-setup
 // prompt, set only when the user ticks the checkbox on either action.
@@ -127,7 +129,7 @@ export function AppShell({ workspaceName, stores, scheduler, workspaceStore, lin
   const toast = useToasts();
   const oc = useOrderCommands(commands, stores.exec, toast);
   const orderConfig = useOrderConfig();
-  const [windowId] = useState(() => crypto.randomUUID());
+  const [windowId] = useState(() => isNativeWindow() ? workspaceWindowTarget(workspaceName) : crypto.randomUUID());
   const hotkeyCoordinator = useMemo(
     () => new HotkeyTargetCoordinator(windowId, hotkeyTargetChannel),
     [hotkeyTargetChannel, windowId],
@@ -174,6 +176,7 @@ export function AppShell({ workspaceName, stores, scheduler, workspaceStore, lin
   const syncConfigRef = useRef<ScannerSyncConfig | undefined>(undefined);
   const monitoringWorkspaceRef = useRef<Workspace | null>(null);
   const sourceWorkspaceRef = useRef<Workspace | null>(null);
+  const closeRequestRef = useRef<string | null>(null);
   wsRef.current = ws;
   sourceWorkspaceRef.current = sourceWorkspace;
   const observeScannerSync = useCallback((next: ScannerSyncConfig | undefined) => {
@@ -216,6 +219,33 @@ export function AppShell({ workspaceName, stores, scheduler, workspaceStore, lin
     if (!current || !current.sourcePanelId || sourceId !== workspaceName) return;
     updateScannerSync({ enabled: !current.enabled });
   }, [updateScannerSync, workspaceName]);
+  useEffect(() => {
+    const complete = commands.workspace?.completeClose;
+    if (!isNativeWindow() || !complete) return;
+    const dispose = Events.On(WORKSPACE_CLOSE_REQUESTED, (event) => {
+      if (event.sender !== `workspace:${workspaceName}`) return;
+      const request = parseWorkspaceCloseRequest(event.data);
+      if (!request || request.workspaceId !== workspaceName || closeRequestRef.current === request.requestId) return;
+      closeRequestRef.current = request.requestId;
+      void completeDurableWorkspaceClose({
+        workspaceId: request.workspaceId,
+        requestId: request.requestId,
+        getCurrentDocument: () => {
+          const current = wsRef.current;
+          if (!current) return null;
+          const api = apiRef.current;
+          return api ? reconcileToGrid(current, api.toJSON()) : current;
+        },
+        save: (document) => workspaceStore.save(document),
+        flush: () => workspaceStore.flush(),
+        complete,
+      }).catch((error: unknown) => {
+        const reason = error instanceof Error ? error.message : "unknown storage error";
+        toast.push({ level: "danger", sticky: true, text: `Workspace close is waiting for a durable save: ${reason}` });
+      });
+    });
+    return dispose;
+  }, [commands.workspace, toast, workspaceName, workspaceStore]);
   useEffect(() => {
     let alive = true;
     setWs(null);
@@ -274,15 +304,9 @@ export function AppShell({ workspaceName, stores, scheduler, workspaceStore, lin
     if (workspaceName === "main") { setWorkspaceLabel("main"); return; }
     if (workspaceName === MONITORING_WORKSPACE_ID) { setWorkspaceLabel(MONITORING_WORKSPACE_NAME); return; }
     const refresh = () => void readWindows(commands).then((c) => setWorkspaceLabel(c.entries.find((e) => e.id === workspaceName)?.name ?? workspaceName));
-    refresh(); const channel = new BroadcastChannel("etape.window-catalog"); channel.onmessage = refresh;
-    return () => channel.close();
-  }, [workspaceName, commands]);
-  useEffect(() => {
-    if (workspaceName === "main" || !navigator.locks) return;
-    const stop = new AbortController();
-    void navigator.locks.request(`etape.workspace.${workspaceName}`, { mode: "shared", signal: stop.signal }, () => new Promise<void>((resolve) => stop.signal.addEventListener("abort", () => resolve(), { once: true }))).catch(() => {});
-    return () => stop.abort();
-  }, [workspaceName]);
+    refresh();
+    return workspaceStore.watchCatalog(refresh);
+  }, [workspaceName, commands, workspaceStore]);
   useEffect(() => {
     if (coordinatorCloseTimerRef.current !== null) {
       clearTimeout(coordinatorCloseTimerRef.current);
@@ -307,16 +331,6 @@ export function AppShell({ workspaceName, stores, scheduler, workspaceStore, lin
       }, 0);
     };
   }, [hotkeyCoordinator, windowId]);
-  useEffect(() => {
-    void commands.sendCommand("GetConfig", { key: "windows.v1" }).then(async (ack) => {
-      if (ack.value !== undefined || localStorage.getItem("etape.windows") == null) return;
-      let legacy: string[]; try { legacy = JSON.parse(localStorage.getItem("etape.windows") ?? "[]"); } catch { legacy = []; }
-      const names = legacy.filter((n) => typeof n === "string" && n !== "main");
-      if (!names.length) { localStorage.removeItem("etape.windows"); return; }
-      await mutateWindows(commands, (fresh) => fresh.entries.length ? fresh : ({ version: 1, entries: [...new Set(names)].map((name) => ({ id: name, name })) }));
-      localStorage.removeItem("etape.windows");
-    }).catch(() => {});
-  }, [commands]);
   useSoundWiring(stores);
   // Task 13: mirror Settings-modal open/close into the module-level modalTracker
   // singleton so every already-mounted PanelFrame (frozen-closure-created, can't
@@ -1031,6 +1045,7 @@ export function AppShell({ workspaceName, stores, scheduler, workspaceStore, lin
             <PanelHeaderHostProvider>
               <DockviewReact components={components} onReady={onReady}
                 defaultTabComponent={PanelHeaderTab} singleTabMode="fullwidth"
+                disableFloatingGroups={isNativeWindow()}
                 theme={mode === "light" ? themeLight : themeDark} />
             </PanelHeaderHostProvider>
           )}

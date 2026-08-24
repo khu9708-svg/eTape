@@ -7,6 +7,7 @@ import { BroadcastChannelBus, LinkGroups } from "./chrome/linkGroups";
 import { DemandRegistry } from "./wire/DemandRegistry";
 import { ReannounceGate } from "./chrome/reannounceGate";
 import { WorkspaceStore } from "./chrome/workspace";
+import { makeWorkspaceApi } from "./chrome/workspaceApi";
 import { PANELS } from "./chrome/panels/registry";
 import { AppShell } from "./chrome/AppShell";
 import { ReconnectOverlay } from "./chrome/ReconnectOverlay";
@@ -23,6 +24,9 @@ import { connectEventToasts } from "./data/quotaToasts";
 import { perf, initPerfFromQuery } from "./perf/PerfMonitor";
 import { PerfHud } from "./perf/PerfHud";
 import { initUiLogFromQuery, uiLog } from "./logging/logger";
+import { isWailsStreamAvailable, makeWailsSocketFactory, WAILS_STREAM_URL } from "./wire/WailsStream";
+import { makeQueryClient, type QueryClient } from "./wire/queries";
+import { makeMutationClient, type MutationClient } from "./wire/mutations";
 
 function EventToastBridge({ client }: { client: WsClient }): null {
   const toast = useToasts();
@@ -96,11 +100,12 @@ export function App({ workspaceName }: { workspaceName: string }): JSX.Element {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const { client, stores, scheduler, workspaceStore, linkGroups, demandRegistry, reannounceGate } = useMemo(() => {
+  const { client, stores, scheduler, workspaceStore, workspaceApi, linkGroups, demandRegistry, reannounceGate, queries, mutations } = useMemo(() => {
     const stores = makeStores();
+    const wails = isWailsStreamAvailable();
     const client = new WsClient({
-      url: `ws://${location.host}/ws`,
-      socketFactory: (url) => {
+      url: wails ? WAILS_STREAM_URL : `ws://${location.host}/ws`,
+      socketFactory: wails ? makeWailsSocketFactory(workspaceName) : (url) => {
         // The real WebSocket delegates to whatever handlers WsClient assigns to
         // sock.onopen/onmessage/onclose (set just after this returns).
         const ws = new WebSocket(url);
@@ -114,11 +119,14 @@ export function App({ workspaceName }: { workspaceName: string }): JSX.Element {
       setTimeout: (fn, ms) => window.setTimeout(fn, ms),
       onMarketClockSample: (sample) => stores.marketClock.update(sample),
     });
+    const queries: QueryClient = makeQueryClient(wails, (name, args) => client.sendQuery(name, args));
+    const workspaceApi = makeWorkspaceApi(wails, client);
+    const mutations: MutationClient = makeMutationClient(wails, (name, args) => client.sendCommand(name, args));
     const scheduler = new Scheduler(browserRaf, (id, err) => {
       const detail = err instanceof Error ? (err.stack ?? `${err.name}: ${err.message}`) : String(err);
       uiLog.error(`painter crashed painterId=${id}: ${detail}`, { painterId: id, error: err });
     });
-    const workspaceStore = new WorkspaceStore(client);
+    const workspaceStore = new WorkspaceStore(client, 500, workspaceApi);
     // Task 13: return the ack promise (rather than discarding it with `void`)
     // so a grouped type-to-load commit can await it via LinkGroups.focusChecked
     // and revert on a rejecting ack instead of moving the group blind.
@@ -133,8 +141,8 @@ export function App({ workspaceName }: { workspaceName: string }): JSX.Element {
     // real mode as a no-op "unchanged" resolve, not a spurious "changed" wait.
     const reannounceGate = new ReannounceGate({ timeoutMs: 5000, initialMode: "pending" });
     const demandRegistry = new DemandRegistry(client, () => reannounceGate.gate());
-    return { client, stores, scheduler, workspaceStore, linkGroups, demandRegistry, reannounceGate };
-  }, []);
+    return { client, stores, scheduler, workspaceStore, workspaceApi, linkGroups, demandRegistry, reannounceGate, queries, mutations };
+  }, [workspaceName]);
 
   useEffect(() => {
     client.onState((s) => {
@@ -178,7 +186,10 @@ export function App({ workspaceName }: { workspaceName: string }): JSX.Element {
   const commands = useMemo(() => ({
     sendCommand: (name: string, args: unknown) => client.sendCommand(name, args),
     sendQuery: (name: string, args: unknown) => client.sendQuery(name, args),
-  }), [client]);
+    workspace: workspaceApi,
+    queries,
+    mutations,
+  }), [client, queries, workspaceApi, mutations]);
 
   return (
     <ThemeProvider commands={commands}>

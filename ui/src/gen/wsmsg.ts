@@ -16,7 +16,7 @@ export type Topic =
   | "watchlist.rows"
   | "exec.account" | "exec.positions" | "exec.orders" | "exec.closedOrders" | "exec.fills" | "exec.status" | "exec.trades"
   | "sys.health" | "sys.session" | "sys.events" | "sys.boot"
-  | "config";
+  | "config" | "workspace";
 
 // ---- wire enums (mirrors wsmsg.go's typed string consts) ----
 export type Side = "BUY" | "SELL" | "SHORT" | "COVER";
@@ -366,6 +366,7 @@ export interface ScannerRankPayload {
   rows: ScannerRow[];
   filters?: ScannerFilters;
   baseline?: boolean;
+  revision?: number /* uint64 */;
 }
 export interface ScannerFilters {
   mode: "gainers" | "losers" | "most_active";
@@ -402,6 +403,7 @@ export interface WatchlistRowsPayload {
   refreshedAt: string | null;
   symbols: string[];
   rows: WatchlistRow[];
+  revision?: number /* uint64 */;
 }
 export interface WatchlistAddArgs {
   symbol: string;
@@ -630,6 +632,16 @@ export interface SetConfigArgs {
 }
 export interface DeleteConfigArgs {
   key: string;
+}
+/**
+ * WorkspaceInvalidation is a low-rate revision hint. The owning Workspace
+ * Stream receives document changes; an empty WorkspaceID broadcasts catalog
+ * changes to every Workspace projection so no browser coordination is needed.
+ */
+export interface WorkspaceInvalidation {
+  workspaceId?: string;
+  kind: string;
+  revision: number /* int64 */;
 }
 export interface SetScannerFiltersArgs {
   filters: ScannerFilters;
