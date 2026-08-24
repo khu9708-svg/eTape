@@ -1,10 +1,8 @@
 import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import type { PanelProps } from "./registry";
-import { mutationClient } from "../../wire/mutations";
 import type { ScannerFilters, ScannerSession } from "../../wire/contract";
 import { useTheme } from "../ThemeProvider";
-import { useToasts } from "../Toast";
 import { FONTS } from "../../render/palette";
 import { formatTapeTime } from "../../render/format";
 import { appendSsrMarker, formatChangePct, formatCompactShares, formatShortInterest, msUntilEtMidnight } from "../format";
@@ -38,7 +36,6 @@ export function ScannerPanel(
   { config, stores, linkGroups, commands, onConfigChange, group: groupProp, scannerSync }: PanelProps,
 ): JSX.Element {
   const { palette } = useTheme();
-  const toast = useToasts();
   const headerSlot = useContext(PanelHeaderSlotContext);
   // config.group is frozen at panel creation (dockview never re-invokes the panel
   // factory with a fresh config after a later swatch re-pick) — PanelFrame threads
@@ -53,7 +50,6 @@ export function ScannerPanel(
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [draft, setDraft] = useState<ScannerFilters>(DEFAULT_FILTERS);
   const [engineFilters, setEngineFilters] = useState<ScannerFilters | null>(null);
-  const mutations = useMemo(() => mutationClient(commands), [commands.mutations, commands.sendCommand]);
   // Single click only highlights a row; double-click is the "load it" gesture — a
   // stray single click while scanning the list should never reassign the linked
   // group's live symbol.
@@ -70,11 +66,10 @@ export function ScannerPanel(
   }, [stores.scanner]);
 
   useEffect(() => {
-    void mutations.GetScannerFilters().then((view) => {
-      setEngineFilters(view.filters);
-      stores.scanner.setFilters(view.filters, view.revision);
-    }).catch(() => undefined);
-  }, [mutations, stores.scanner]);
+    void commands.sendCommand("GetScannerFilters", {}).then((ack) => {
+      if (ack.status === "accepted" && ack.value) setEngineFilters(ack.value as ScannerFilters);
+    });
+  }, [commands]);
 
   const filters = { ...DEFAULT_FILTERS, ...(cv.filters ?? engineFilters ?? {}) };
   useEffect(() => {
@@ -89,16 +84,9 @@ export function ScannerPanel(
 
   const openFilters = () => { setDraft(filters); setFiltersOpen(true); };
   const applyFilters = () => {
-    void mutations.SetScannerFilters({ filters: draft }).then((result) => {
-      if (result.status !== "accepted") {
-        toast.push({ level: "warn", text: result.reason || "Scanner filters rejected." });
-        return;
-      }
-      setEngineFilters(result.filters);
-      stores.scanner.setFilters(result.filters, result.revision);
-      if (draft.mode !== filters.mode) { const next = scannerModeSort(draft.mode); setSort(next); onConfigChange({ sort: next }); }
-      setFiltersOpen(false);
-    }).catch(() => toast.push({ level: "danger", text: "Scanner filter update failed (transport)." }));
+    void commands.sendCommand("SetScannerFilters", { filters: draft });
+    if (draft.mode !== filters.mode) { const next = scannerModeSort(draft.mode); setSort(next); onConfigChange({ sort: next }); }
+    setFiltersOpen(false);
   };
   const resetDefaults = () => setDraft(DEFAULT_FILTERS);
   const clickSort = (col: string) => {
@@ -110,10 +98,7 @@ export function ScannerPanel(
   // need membership state; adding an already-watchlisted symbol is a no-op on
   // the engine side (WatchlistAdd is idempotent), so no add/remove branching.
   const buildRowMenuItems = (sym: string): MenuEntry[] =>
-    [{ label: `Add ${bareSymbol(sym)} to watchlist`, onClick: () => void mutations.WatchlistAdd({ symbol: sym }).then((result) => {
-      if (result.status === "accepted") stores.watchlist.applyMutation(result);
-      else toast.push({ level: "warn", text: result.reason || "Watchlist update rejected." });
-    }).catch(() => toast.push({ level: "danger", text: "Watchlist update failed (transport)." })) }];
+    [{ label: `Add ${bareSymbol(sym)} to watchlist`, onClick: () => void commands.sendCommand("WatchlistAdd", { symbol: sym }) }];
 
   const sessionLabel = cv.session ? SESSION_LABEL[cv.session] : null;
   const syncStatus = scannerSync && (scannerSync.statusVisible ?? scannerSync.selected)

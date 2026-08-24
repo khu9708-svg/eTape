@@ -67,7 +67,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'wire',
-          include: ['src/wire/WsClient.test.ts', 'src/wire/WailsStream.test.ts', 'src/wire/mutations.test.ts'],
+          include: ['src/wire/WsClient.test.ts'],
         },
       },
       {
@@ -119,7 +119,6 @@ export default defineConfig({
             'src/chrome/panels/registry.test.tsx',
             'src/chrome/panels/ScannerPanel.test.tsx',
             'src/chrome/scannerSync.test.ts',
-            'src/chrome/workspaceClose.test.ts',
             'src/chrome/workspace.test.ts',
           ],
           pool: 'forks',

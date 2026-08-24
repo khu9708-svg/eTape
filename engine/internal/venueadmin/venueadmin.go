@@ -24,29 +24,10 @@ type Admin struct {
 	cfgPath   string
 	credsPath string
 	booted    config.VenueConfig
-	revision  uint64
 }
-
-type ValidationError struct{ Err error }
-
-func (e ValidationError) Error() string       { return e.Err.Error() }
-func (e ValidationError) Unwrap() error       { return e.Err }
-func (e ValidationError) BusinessError() bool { return true }
-
-type CredentialInUseError struct{ Err error }
-
-func (e CredentialInUseError) Error() string       { return e.Err.Error() }
-func (e CredentialInUseError) Unwrap() error       { return e.Err }
-func (e CredentialInUseError) BusinessError() bool { return true }
 
 func New(cfgPath, credsPath string, booted config.VenueConfig) *Admin {
 	return &Admin{cfgPath: cfgPath, credsPath: credsPath, booted: booted}
-}
-
-func (a *Admin) Revision() uint64 {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.revision
 }
 
 // GetVenueSetup returns the file state (parsed fresh), the running state (what
@@ -56,88 +37,53 @@ func (a *Admin) Revision() uint64 {
 // consistent snapshot. A missing/unreadable credentials file yields no keys,
 // not an error.
 func (a *Admin) GetVenueSetup() (file, running config.VenueConfig, credKeys []string, moomooAttempted bool, err error) {
-	file, running, credKeys, moomooAttempted, _, err = a.GetVenueSetupSnapshot()
-	return
-}
-
-// GetVenueSetupSnapshot returns the setup state and its exact revision from
-// one lock acquisition so a typed binding cannot label an older file snapshot
-// with a newer concurrent mutation.
-func (a *Admin) GetVenueSetupSnapshot() (file, running config.VenueConfig, credKeys []string, moomooAttempted bool, revision uint64, err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	cfg, err := config.Load(a.cfgPath)
 	if err != nil {
-		return config.VenueConfig{}, config.VenueConfig{}, nil, false, a.revision, err
+		return config.VenueConfig{}, config.VenueConfig{}, nil, false, err
 	}
 	file = config.VenueConfig{Venues: cfg.Venues, Gate: cfg.Gate}
 	keys, kerr := creds.Keys(a.credsPath)
 	if kerr != nil {
 		keys = nil // credentials are optional for read; never fail the setup fetch
 	}
-	return file, a.booted, keys, cfg.Seed.MoomooAttempted, a.revision, nil
+	return file, a.booted, keys, cfg.Seed.MoomooAttempted, nil
 }
 
 // SetVenueSetup validates against the current credential keys, then rewrites
 // config.toml. Nothing is written on any validation failure.
 func (a *Admin) SetVenueSetup(vc config.VenueConfig) error {
-	_, err := a.SetVenueSetupWithRevision(vc)
-	return err
-}
-
-func (a *Admin) SetVenueSetupWithRevision(vc config.VenueConfig) (uint64, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	keys, _ := creds.Keys(a.credsPath)
 	if err := config.ValidateVenueConfig(vc, keys); err != nil {
-		return a.revision, ValidationError{Err: err}
+		return err
 	}
-	if err := config.WriteVenueConfig(a.cfgPath, vc); err != nil {
-		return a.revision, err
-	}
-	a.revision++
-	return a.revision, nil
+	return config.WriteVenueConfig(a.cfgPath, vc)
 }
 
 func (a *Admin) PutCredential(name, keyID, secretKey string) error {
-	_, err := a.PutCredentialWithRevision(name, keyID, secretKey)
-	return err
-}
-
-func (a *Admin) PutCredentialWithRevision(name, keyID, secretKey string) (uint64, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if err := creds.Put(a.credsPath, name, keyID, secretKey); err != nil {
-		return a.revision, err
-	}
-	a.revision++
-	return a.revision, nil
+	return creds.Put(a.credsPath, name, keyID, secretKey)
 }
 
 // DeleteCredential refuses while any venue in the current FILE config
 // references the name.
 func (a *Admin) DeleteCredential(name string) error {
-	_, err := a.DeleteCredentialWithRevision(name)
-	return err
-}
-
-func (a *Admin) DeleteCredentialWithRevision(name string) (uint64, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	file, err := config.ReadVenueConfig(a.cfgPath)
 	if err != nil {
-		return a.revision, err
+		return err
 	}
 	for _, v := range file.Venues {
 		if v.Credentials == name {
-			return a.revision, CredentialInUseError{Err: fmt.Errorf("credential %q is in use by venue %q", name, v.ID)}
+			return fmt.Errorf("credential %q is in use by venue %q", name, v.ID)
 		}
 	}
-	if err := creds.Delete(a.credsPath, name); err != nil {
-		return a.revision, err
-	}
-	a.revision++
-	return a.revision, nil
+	return creds.Delete(a.credsPath, name)
 }
 
 // moomooSeedStateLocked re-reads the file fresh and reports the auto-config
@@ -178,11 +124,7 @@ func (a *Admin) MarkMoomooSeedAttempted() error {
 	if attempted {
 		return nil
 	}
-	if err := config.WriteMoomooSeed(a.cfgPath, nil); err != nil {
-		return err
-	}
-	a.revision++
-	return nil
+	return config.WriteMoomooSeed(a.cfgPath, nil)
 }
 
 // SeedMoomooVenue appends {ID: "moomoo", Broker: "moomoo", Env: "live",
@@ -205,11 +147,7 @@ func (a *Admin) SeedMoomooVenue(accID uint64) (created bool, err error) {
 	}
 	if venueExists {
 		// Marker is unset (checked above) — always write it here.
-		if err := config.WriteMoomooSeed(a.cfgPath, nil); err != nil {
-			return false, err
-		}
-		a.revision++
-		return false, nil
+		return false, config.WriteMoomooSeed(a.cfgPath, nil)
 	}
 
 	file, err := config.ReadVenueConfig(a.cfgPath)
@@ -229,11 +167,10 @@ func (a *Admin) SeedMoomooVenue(accID uint64) (created bool, err error) {
 
 	keys, _ := creds.Keys(a.credsPath)
 	if err := config.ValidateVenueConfig(newVC, keys); err != nil {
-		return false, ValidationError{Err: err}
+		return false, err
 	}
 	if err := config.WriteMoomooSeed(a.cfgPath, &v); err != nil {
 		return false, err
 	}
-	a.revision++
 	return true, nil
 }

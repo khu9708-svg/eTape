@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { PanelProps } from "./registry";
-import type { LocateEligibility, LocateQuote, LocateRecord } from "../../gen/wsmsg";
-import { queryClient } from "../../wire/queries";
+import type { LocateEligibility, LocateListResult, LocateQuote, LocateQuoteResult, LocateRecord } from "../../gen/wsmsg";
 import { useTheme } from "../ThemeProvider";
 import { useToasts } from "../Toast";
 import { useVenueSelection } from "../exec/venueSelection";
@@ -166,9 +165,9 @@ export function LocatesPanel({ config, stores, commands, linkGroups, group: grou
     if (!supported || !symbol) return;
     const generation = generationRef.current;
     const requestIdentity = identity;
-    void queryClient(commands).QueryLocateEligibility({ venue, symbol }).then((raw) => {
+    void commands.sendQuery("QueryLocateEligibility", { venue, symbol }).then((raw) => {
       if (generation !== generationRef.current || identityRef.current !== requestIdentity) return;
-      setEligibility(raw);
+      setEligibility(raw as LocateEligibility);
     }).catch((err: unknown) => {
       if (generation === generationRef.current && identityRef.current === requestIdentity) {
         setEligibility({ supported: true, found: false, borrowStatus: null, shortable: null, marginable: null, tradable: null, error: err instanceof Error ? err.message : "eligibility unavailable" });
@@ -184,9 +183,9 @@ export function LocatesPanel({ config, stores, commands, linkGroups, group: grou
     const requestIdentity = target === "active" ? `${venue}|${filter.symbol}` : `${venue}|${filter.status}`;
     const isCurrent = () => seq === seqRef.current && identityRef.current === requestIdentity;
     try {
-      const raw = await queryClient(commands).QueryLocates({
+      const raw = await commands.sendQuery("QueryLocates", {
         venue, status: filter.status, symbol: filter.symbol, start: "", end: "", limit: 100, pageToken: filter.pageToken ?? "",
-      });
+      }) as LocateListResult;
       if (!isCurrent()) return;
       if (raw.error) {
         setListError(raw.error);
@@ -223,7 +222,7 @@ export function LocatesPanel({ config, stores, commands, linkGroups, group: grou
     setRequestError("");
     setLocateResult(null);
     try {
-      const raw = await queryClient(commands).QueryLocateQuotes({ venue, symbols: [symbol] });
+      const raw = await commands.sendQuery("QueryLocateQuotes", { venue, symbols: [symbol] }) as LocateQuoteResult;
       if (generation !== generationRef.current || identityRef.current !== requestIdentity) return;
       const next = raw.quotes?.find((item) => normalizeSymbol(item.symbol) === symbol) ?? null;
       setQuote(next);

@@ -1,4 +1,3 @@
-import "@wailsio/runtime";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 // dockview's own stylesheet must load BEFORE global.css: both define
@@ -11,14 +10,12 @@ import "dockview/dist/styles/dockview.css";
 import "./fonts.css";
 import "./global.css";
 import { App } from "./App";
-import { isNativeWindow, parseWorkspaceName, workspaceWindowTarget } from "./chrome/windows";
+import { parseWorkspaceName, workspaceWindowTarget } from "./chrome/windows";
 import { MONITORING_WORKSPACE_ID } from "./chrome/workspace";
 
 const workspaceName = parseWorkspaceName(location.search);
-if (!isNativeWindow()) {
-  if (workspaceName === MONITORING_WORKSPACE_ID) window.name = workspaceWindowTarget(MONITORING_WORKSPACE_ID);
-  else if (window.name === workspaceWindowTarget(MONITORING_WORKSPACE_ID)) window.name = "";
-}
+if (workspaceName === MONITORING_WORKSPACE_ID) window.name = workspaceWindowTarget(MONITORING_WORKSPACE_ID);
+else if (window.name === workspaceWindowTarget(MONITORING_WORKSPACE_ID)) window.name = "";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

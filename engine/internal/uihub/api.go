@@ -69,7 +69,6 @@ type Config struct {
 	OutBuf                         int
 	DistDir                        string
 	Demo                           bool
-	DisableLegacyQueries           bool
 	OnConfigSet                    func(key, value string)
 }
 
@@ -107,14 +106,8 @@ func New(clk clock.Clock, cfg Config, ex ExecCore, st Stores, ind Indicators, va
 	h.cmd = cmd
 	cmd.restart = requestRestart
 	cmd.startDemo = startDemo
-	var qry queryHandler
-	if !cfg.DisableLegacyQueries {
-		// Browser/server mode retains the compatibility bridge. Wails mode sets
-		// DisableLegacyQueries because its callers use EngineService bindings.
-		legacy := newQueries(st, clk, h)
-		legacy.locates = locateRegistry
-		qry = legacy
-	}
+	qry := newQueries(st, clk, h)
+	qry.locates = locateRegistry
 	srv := NewServer(h, cmd, qry, ServerConfig{DistDir: cfg.DistDir, OutBuf: cfg.OutBuf})
 	return h, srv
 }

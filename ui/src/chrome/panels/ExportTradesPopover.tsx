@@ -2,7 +2,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Palette } from "../../render/palette";
-import { queryClient, type QueryClient } from "../../wire/queries";
+import type { ExportFillsResult } from "../../wire/contract";
 import type { ToastApi } from "../Toast";
 import { HoverButton } from "../controls/HoverButton";
 
@@ -20,7 +20,7 @@ export interface ExportTradesPopoverProps {
   palette: Palette;
   anchor: HTMLElement | null;
   venue: string;
-  commands: { sendQuery(name: string, args: unknown): Promise<unknown>; queries?: QueryClient };
+  commands: { sendQuery(name: string, args: unknown): Promise<unknown> };
   toast: ToastApi;
   onClose: () => void;
 }
@@ -67,11 +67,10 @@ export function ExportTradesPopover(
   if (!pos && anchor) return null; // first-tick guard: position not measured yet
 
   const download = () => {
-    void queryClient(commands).ExportFills({
+    void commands.sendQuery("ExportFills", {
       venue, preset, from: preset === "custom" ? from : "", to: preset === "custom" ? to : "",
     }).then((payload) => {
-      const { csv, count, error } = payload;
-      if (error) throw new Error(error);
+      const { csv, count } = payload as ExportFillsResult;
       if (!count) { toast.push({ level: "info", text: `No fills to export for ${venue}` }); return; }
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
       const url = URL.createObjectURL(blob);

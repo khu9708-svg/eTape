@@ -23,8 +23,9 @@ var ErrRestarting = errors.New("engine restarting")
 // client is the hub's view of a connected UI socket (implemented by *conn, Task 7).
 // ck is the outbound coalesce key: "" => the frame is lossless/ordered; a
 // non-empty ck => a latest-wins delta the conn may supersede in place if the
-// client is slow (see outbox). A false return means an explicit outbound bound
-// was reached; the hub then closes+drops it rather than hiding loss.
+// client is slow (see outbox). A false return means the lossless lane
+// overflowed its hard cap (a genuinely pathological client); the hub then
+// closes+drops it.
 type client interface {
 	id() uint64
 	enqueue(b []byte, ck string) bool
@@ -67,12 +68,6 @@ type pub struct {
 	topic   wsmsg.Topic
 	key     string
 	payload any
-}
-
-type workspaceNotification struct {
-	workspaceID string
-	revision    int64
-	kind        string
 }
 
 type ensureDemandReq struct {
@@ -150,8 +145,9 @@ type Hub struct {
 	m   *mirror
 	// cmd is a back-reference to the commands value New builds alongside this
 	// Hub, set exactly once in New before Run (or any conn goroutine) starts —
-	// see New's `h.cmd = cmd` and the command handler setup. Never reassigned
-	// after that, so reading it from the connection goroutines is race-free.
+	// see New's `h.cmd = cmd` and SetWatchlist's doc comment. Never reassigned
+	// after that, so reading it from SetWatchlist (called later, from boot's
+	// goroutine) is race-free without its own atomic slot.
 	cmd *commands
 
 	register           chan client
@@ -167,7 +163,6 @@ type Hub struct {
 	mdCh               chan md.Update
 	execCh             chan exec.Update
 	pubCh              chan pub
-	workspaceCh        chan workspaceNotification
 	dropCh             chan dropReport     // conn goroutines -> Run: write-timeout drop reports
 	backfillDoneCh     chan backfillResult // backfill goroutines -> Run: daily-fetch outcome
 	syncCh             chan chan struct{}  // test barrier
@@ -227,7 +222,6 @@ func NewHub(clk clock.Clock, cfg HubConfig, m *mirror) *Hub {
 		mdCh:               make(chan md.Update, cfg.Buf),
 		execCh:             make(chan exec.Update, cfg.Buf),
 		pubCh:              make(chan pub, cfg.Buf),
-		workspaceCh:        make(chan workspaceNotification, cfg.Buf),
 		dropCh:             make(chan dropReport, cfg.Buf),
 		backfillDoneCh:     make(chan backfillResult, cfg.Buf),
 		syncCh:             make(chan chan struct{}),
@@ -406,11 +400,20 @@ func (h *Hub) cachedDaily() func(string) {
 
 func (h *Hub) backfill() *backfillBox { return h.backfillSlot.Load() }
 
-func (h *Hub) ValidateSymbol(ctx context.Context, symbol string) error {
-	if h == nil || h.cmd == nil {
-		return nil
+// SetWatchlist wires the watchlist add/remove commands once the poller exists
+// (called from startPollers, after uihub.New). Stores atomically into the
+// commands' wl slot — same late-binding + race-safety as SetFeed. h.cmd is set
+// once in New before any goroutine, so reading it here is race-free.
+func (h *Hub) SetWatchlist(c watchlistCtl) {
+	if h.cmd != nil {
+		h.cmd.wl.Store(&watchlistBox{wl: c})
 	}
-	return h.cmd.validateSymbol(ctx, symbol)
+}
+
+func (h *Hub) SetScanner(c scannerCtl) {
+	if h.cmd != nil && c != nil {
+		h.cmd.scanner.Store(&scannerBox{scanner: c})
+	}
 }
 
 // reportBackfill returns worker completion to Run's own goroutine.
@@ -496,16 +499,6 @@ func (h *Hub) Publish(t wsmsg.Topic, key string, p any) {
 	}
 }
 
-// NotifyWorkspace sends a revision hint to the owning Wails Workspace Stream.
-// An empty workspaceID is the catalog broadcast; both are low-rate lossless
-// frames and never travel through ordinary Wails events.
-func (h *Hub) NotifyWorkspace(workspaceID string, revision int64, kind string) {
-	select {
-	case h.workspaceCh <- workspaceNotification{workspaceID: workspaceID, revision: revision, kind: kind}:
-	case <-h.closed:
-	}
-}
-
 // ReportUIDrop lets a conn's own goroutine (writeLoop, on a write timeout)
 // tell the Hub a client is being dropped, so the resulting ui-drop
 // sys.events frame is still built and emitted from Run's own single
@@ -587,8 +580,6 @@ func (h *Hub) Run(ctx context.Context) error {
 			h.handleExec(u)
 		case p := <-h.pubCh:
 			h.handlePub(p)
-		case n := <-h.workspaceCh:
-			h.handleWorkspaceNotification(n)
 		case r := <-h.dropCh:
 			h.handleDrop(r)
 		case r := <-h.backfillDoneCh:
@@ -649,8 +640,6 @@ func (h *Hub) drain() {
 			h.handleExec(u)
 		case p := <-h.pubCh:
 			h.handlePub(p)
-		case n := <-h.workspaceCh:
-			h.handleWorkspaceNotification(n)
 		case r := <-h.dropCh:
 			h.handleDrop(r)
 		case r := <-h.backfillDoneCh:
@@ -944,42 +933,6 @@ func (h *Hub) handlePub(p pub) {
 	s := staged{Topic: p.topic, Key: p.key, Payload: p.payload}
 	h.m.applyPub(s)
 	h.broadcast(s, false)
-}
-
-func (h *Hub) handleWorkspaceNotification(n workspaceNotification) {
-	b, err := json.Marshal(wsmsg.DeltaMsg{
-		Kind:  "delta",
-		Topic: wsmsg.TopicWorkspace,
-		Key:   n.workspaceID,
-		Payload: wsmsg.WorkspaceInvalidation{
-			WorkspaceID: n.workspaceID,
-			Kind:        n.kind,
-			Revision:    n.revision,
-		},
-	})
-	if err != nil {
-		return
-	}
-	var dead []client
-	for c, subs := range h.clients {
-		if !subs[wsmsg.TopicWorkspace] {
-			continue
-		}
-		if n.workspaceID != "" {
-			owner, ok := c.(interface{ workspaceID() string })
-			if !ok || owner.workspaceID() != n.workspaceID {
-				continue
-			}
-		}
-		if !c.enqueue(b, "") {
-			dead = append(dead, c)
-		}
-	}
-	for _, c := range dead {
-		delete(h.clients, c)
-		c.close()
-		h.emitUIDrop(c.id(), "outbound queue overflow")
-	}
 }
 
 // handleDrop services a dropReport that arrived via dropCh (from a conn's own

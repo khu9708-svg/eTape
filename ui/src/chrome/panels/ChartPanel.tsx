@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createChart, createTextWatermark, CandlestickSeries, BarSeries, HistogramSeries, LineSeries, AreaSeries, type IChartApi, type ISeriesApi, type Time, type Logical, type LogicalRange, type Coordinate } from "lightweight-charts";
 import type { PanelProps } from "./registry";
@@ -32,9 +32,7 @@ import { computeLegendView } from "./tv/legendView";
 import { BarCloseTimer } from "./tv/BarCloseTimer";
 import { perf } from "../../perf/PerfMonitor";
 import { bareSymbol } from "../exec/orderStatus";
-import { queryClient, type QueryChartWindowResult } from "../../wire/queries";
-import { mutationClient } from "../../wire/mutations";
-import { useToasts } from "../Toast";
+import type { QueryChartWindowResult } from "../../gen/wsmsg";
 import { uiLog } from "../../logging/logger";
 
 const ALL_CHART_BARS = 1_000_000;
@@ -135,8 +133,6 @@ function makeFacade(chart: IChartApi, palette: Palette): {
 }
 
 export function ChartPanel({ config, stores, scheduler, width, height, linkGroups, commands, onConfigChange, group: groupProp, symbol: symbolProp, monitoring }: PanelProps): JSX.Element {
-  const mutations = useMemo(() => mutationClient(commands), [commands.mutations, commands.sendCommand]);
-  const toast = useToasts();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const controllerRef = useRef<ChartController | null>(null);
   const setFacadePaletteRef = useRef<((p: Palette) => void) | null>(null);
@@ -294,10 +290,10 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
       pending.querying = true;
       let retry = false;
       try {
-        const result = await queryClient(commands).QueryChartWindow({
+        const result = await commands.sendQuery("QueryChartWindow", {
           symbol, timeframe, fromMs, toMs, tailBars: 0,
           indicatorSeriesKeys: pending.seriesKeys, skipBars: true,
-        });
+        }) as QueryChartWindowResult;
         if (disposed || generation !== chartGenerationRef.current || currentSymbol !== symbol || tfRef.current !== timeframe
           || pendingIndicatorHydrationRef.current.get(instanceId) !== pending) return;
         for (const series of result.indicators ?? []) {
@@ -339,10 +335,10 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
         const generation = ++viewportGeneration;
         const startedAt = performance.now();
         const keys = indicatorReloadPending ? [] : indicatorKeys();
-        const result = await queryClient(commands).QueryChartWindow({
+        const result = await commands.sendQuery("QueryChartWindow", {
           symbol: currentSymbol, timeframe: tfRef.current, fromMs: 0, toMs: 0, tailBars: ALL_CHART_BARS,
           indicatorSeriesKeys: keys,
-        });
+        }) as QueryChartWindowResult;
         if (mergeSnapshot(result, generation)) {
           stores.bars.expandWindow(result.symbol, result.timeframe, result.fromMs, Number.POSITIVE_INFINITY);
           for (const key of keys) stores.indicators.expandWindow(key, result.fromMs, Number.POSITIVE_INFINITY);
@@ -479,8 +475,8 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
 
     const backfillFills = (sym: string) => {
       controller.setFills(aggregateFillMarkers(stores.fills.forSymbolFills(sym), tfRef.current as Timeframe));
-      void queryClient(commands).QueryFills({ symbol: sym, fromMs: 0, toMs: Date.now() })
-        .then((payload) => { stores.fills.ingest(payload); })
+      void commands.sendQuery("QueryFills", { symbol: sym, fromMs: 0, toMs: Date.now() })
+        .then((payload) => { stores.fills.ingest((payload as Parameters<typeof stores.fills.ingest>[0]) ?? []); })
         .catch(() => { /* reconnect triggers the next chart refresh */ });
     };
     let pendingFirstPaint: { symbol: string; timeframe: string; startedAt: number; sequence: number } | null = null;
@@ -979,15 +975,9 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
     items.push(
       inWatch
         ? { label: `Remove ${bareSymbol(chartSymbol)} from watchlist`, danger: true,
-            onClick: () => void mutations.WatchlistRemove({ symbol: chartSymbol }).then((result) => {
-              if (result.status === "accepted") stores.watchlist.applyMutation(result);
-              else toast.push({ level: "warn", text: result.reason || "Watchlist update rejected." });
-            }).catch(() => toast.push({ level: "danger", text: "Watchlist update failed (transport)." })) }
+            onClick: () => void commands.sendCommand("WatchlistRemove", { symbol: chartSymbol }) }
         : { label: `Add ${bareSymbol(chartSymbol)} to watchlist`,
-            onClick: () => void mutations.WatchlistAdd({ symbol: chartSymbol }).then((result) => {
-              if (result.status === "accepted") stores.watchlist.applyMutation(result);
-              else toast.push({ level: "warn", text: result.reason || "Watchlist update rejected." });
-            }).catch(() => toast.push({ level: "danger", text: "Watchlist update failed (transport)." })) },
+            onClick: () => void commands.sendCommand("WatchlistAdd", { symbol: chartSymbol }) },
     );
     items.push("separator");
     items.push({ label: "Settings…", onClick: () => setChartSettingsOpen(true) });

@@ -121,7 +121,6 @@ type Poller struct {
 	seenDay               int64                      // ET day of the current seen-sets + float cache
 	mu                    sync.RWMutex
 	filters               wsmsg.ScannerFilters
-	revision              uint64
 	baseline              bool
 	poke                  chan struct{}
 	lastStockFilter       time.Time
@@ -173,23 +172,13 @@ func ValidateFilters(f wsmsg.ScannerFilters) error {
 	return nil
 }
 
-func (p *Poller) FilterSnapshot() (wsmsg.ScannerFilters, uint64) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return p.filters, p.revision
-}
-
-func (p *Poller) Filters() wsmsg.ScannerFilters { f, _ := p.FilterSnapshot(); return f }
-func (p *Poller) Revision() uint64              { _, revision := p.FilterSnapshot(); return revision }
-
-func (p *Poller) SetFiltersWithRevision(f wsmsg.ScannerFilters) (uint64, error) {
+func (p *Poller) Filters() wsmsg.ScannerFilters { p.mu.RLock(); defer p.mu.RUnlock(); return p.filters }
+func (p *Poller) SetFilters(f wsmsg.ScannerFilters) error {
 	if err := ValidateFilters(f); err != nil {
-		return 0, err
+		return err
 	}
 	p.mu.Lock()
 	p.filters = f
-	p.revision++
-	revision := p.revision
 	p.baseline = true
 	p.resetBoard = true
 	p.mu.Unlock()
@@ -197,12 +186,7 @@ func (p *Poller) SetFiltersWithRevision(f wsmsg.ScannerFilters) (uint64, error) 
 	case p.poke <- struct{}{}:
 	default:
 	}
-	return revision, nil
-}
-
-func (p *Poller) SetFilters(f wsmsg.ScannerFilters) error {
-	_, err := p.SetFiltersWithRevision(f)
-	return err
+	return nil
 }
 
 func (p *Poller) Run(ctx context.Context) error {
@@ -254,7 +238,7 @@ func sessionKey(phase session.Phase) string {
 }
 
 func (p *Poller) pollOnce(ctx context.Context, now time.Time) {
-	filters, revision := p.FilterSnapshot()
+	filters := p.Filters()
 	phase := session.PhaseAt(now)
 	p.mu.Lock()
 	if p.board == nil || p.resetBoard || (phase == session.PostMarket && p.phaseSet && p.lastPhase != session.PostMarket) {
@@ -331,8 +315,7 @@ func (p *Poller) pollOnce(ctx context.Context, now time.Time) {
 		return *rows[i].ChangePct > *rows[j].ChangePct
 	})
 	p.overlayShortInterest(rows, now)
-	_, currentRevision := p.FilterSnapshot()
-	if revision != currentRevision {
+	if !sameFilters(filters, p.Filters()) {
 		return // SetFilters queued a fresh poll; never publish stale authoritative filters.
 	}
 	if bootstrapOK {
@@ -343,22 +326,28 @@ func (p *Poller) pollOnce(ctx context.Context, now time.Time) {
 	p.updatePool(now, rows)
 	sess := sessionKey(phase)
 	p.mu.Lock()
-	if p.revision != revision {
-		p.mu.Unlock()
-		return
-	}
 	baseline := p.baseline
 	p.baseline = false
 	p.mu.Unlock()
 	p.pub.Publish(wsmsg.TopicScannerRank, sess, wsmsg.ScannerRankPayload{
 		RefreshedAt: p.clk.Now().UTC().Format("2006-01-02T15:04:05.000Z07:00"),
-		Rows:        rows, Filters: filters, Baseline: baseline, Revision: revision,
+		Rows:        rows, Filters: filters, Baseline: baseline,
 	})
 	for _, sym := range p.newHits(sess, rows) {
 		p.pub.Publish(wsmsg.TopicScannerHit, sess, wsmsg.ScanHitPayload{
 			Symbol: sym, At: p.clk.Now().UTC().Format("2006-01-02T15:04:05.000Z07:00"),
 		})
 	}
+}
+
+func sameFilters(a, b wsmsg.ScannerFilters) bool {
+	if a.Mode != b.Mode || a.MinChangePct != b.MinChangePct || a.MinVolume != b.MinVolume || a.MinVolumeRatio != b.MinVolumeRatio || a.FloatUnit != b.FloatUnit || a.VolumeUnit != b.VolumeUnit {
+		return false
+	}
+	if a.MaxFloatShares == nil || b.MaxFloatShares == nil {
+		return a.MaxFloatShares == nil && b.MaxFloatShares == nil
+	}
+	return *a.MaxFloatShares == *b.MaxFloatShares
 }
 
 func scanDemandID(symbol string) string { return "scan:" + symbol }

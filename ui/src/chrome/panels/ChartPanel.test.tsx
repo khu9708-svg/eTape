@@ -2,7 +2,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, cleanup, fireEvent, within, screen, act } from "@testing-library/react";
 import { ThemeProvider } from "../ThemeProvider";
-import { ToastProvider } from "../Toast";
 
 // Mock lightweight-charts so the panel test never touches a real canvas.
 // timeScaleApi is a stable object (not a fresh literal per call) so a test can hold
@@ -54,7 +53,6 @@ import { DEFAULT_CHART_SETTINGS } from "./tv/ChartSettingsDialog";
 import { FakeDrawingBus, FakeDrawingBusHub } from "../../../test/fakes";
 import { perf } from "../../perf/PerfMonitor";
 import { DrawingInteraction } from "../../render/chart/drawings/interaction";
-import { makeQueryClient } from "../../wire/queries";
 
 // jsdom has no ResizeObserver; ChartPanel's resize wiring only needs observe/disconnect.
 class MockResizeObserver {
@@ -82,26 +80,22 @@ function renderChart(id = "c1", sharedStores?: ReturnType<typeof makeStores>, sh
   const stores = sharedStores ?? makeStores();
   const scheduler = sharedScheduler ?? new Scheduler(browserRaf, () => {});
   const linkGroups = new LinkGroups(new BroadcastChannelBus(), () => {});
-  const sendQuery = vi.fn(async (name: string, args: unknown) => {
-    if (name === "QueryChartWindow" && chartQueryResult) return chartQueryResult;
-	  if (name === "QueryChartWindow") return { ...(args as object), bars: [], indicators: [], historyRevision: 0 };
-    return [];
-  });
   const commands = {
     sendCommand: vi.fn(async (): Promise<AckMsg> => ({ kind: "ack", corrId: "c", status: "accepted" })),
-    sendQuery,
-    queries: makeQueryClient(false, (name, args) => sendQuery(name, args)),
+    sendQuery: vi.fn(async (name: string, args: unknown) => {
+      if (name === "QueryChartWindow" && chartQueryResult) return chartQueryResult;
+	  if (name === "QueryChartWindow") return { ...(args as object), bars: [], indicators: [], historyRevision: 0 };
+      return [];
+    }),
   };
   const config = { id, panelId: "chart", group: "green" as const, settings: { symbol: "US.AAPL", timeframe: "1m", ...settingsOverride } };
   const onConfigChange = vi.fn();
   const panel = (group?: PanelConfig["group"], symbol?: string) => (
     <ThemeProvider>
-      <ToastProvider>
-        <ChartPanel config={config} stores={stores} scheduler={scheduler} width={400} height={300}
-          linkGroups={linkGroups} commands={commands} onConfigChange={onConfigChange}
-          monitoring={monitoring}
-          {...(group === undefined ? {} : { group })} {...(symbol === undefined ? {} : { symbol })} />
-      </ToastProvider>
+      <ChartPanel config={config} stores={stores} scheduler={scheduler} width={400} height={300}
+        linkGroups={linkGroups} commands={commands} onConfigChange={onConfigChange}
+        monitoring={monitoring}
+        {...(group === undefined ? {} : { group })} {...(symbol === undefined ? {} : { symbol })} />
     </ThemeProvider>
   );
   const utils = render(panel());

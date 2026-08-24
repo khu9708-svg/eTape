@@ -1,28 +1,22 @@
 // @vitest-environment jsdom
-import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
-import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { LIGHT } from "../../render/palette";
 import { ThemeProvider } from "../ThemeProvider";
 import { ToastProvider, useToasts } from "../Toast";
 import { ExportTradesPopover } from "./ExportTradesPopover";
-import { makeQueryClient, type QueryClient } from "../../wire/queries";
 
-afterEach(cleanup);
-
-type Commands = { sendQuery: (name: string, args: unknown) => Promise<unknown>; queries?: QueryClient };
-
-function Harness({ commands, onClose = () => {} }: { commands: Commands; onClose?: () => void }) {
+function Harness({ commands, onClose = () => {} }: { commands: { sendQuery: (name: string, args: unknown) => Promise<unknown> }; onClose?: () => void }) {
   const toast = useToasts();
   const anchor = document.createElement("button");
   document.body.appendChild(anchor);
   return <ExportTradesPopover palette={LIGHT} anchor={anchor} venue="sim" commands={commands} toast={toast} onClose={onClose} />;
 }
 
-function wrap(commands: Commands, onClose: () => void = () => {}) {
+function wrap(commands: { sendQuery: (name: string, args: unknown) => Promise<unknown> }, onClose: () => void = () => {}) {
   // ToastProvider always renders ToastHost, which reads palette via useTheme() —
   // needs a ThemeProvider ancestor, same as Toast.test.tsx's setup().
-  const typedCommands = commands.queries ? commands : { ...commands, queries: makeQueryClient(false, (name, args) => commands.sendQuery(name, args)) };
-  return render(<ThemeProvider><ToastProvider><Harness commands={typedCommands} onClose={onClose} /></ToastProvider></ThemeProvider>);
+  return render(<ThemeProvider><ToastProvider><Harness commands={commands} onClose={onClose} /></ToastProvider></ThemeProvider>);
 }
 
 describe("ExportTradesPopover", () => {

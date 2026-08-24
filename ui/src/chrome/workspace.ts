@@ -1,6 +1,5 @@
 import type { LinkGroup } from "./linkGroups";
 import type { VenueID } from "../wire/contract";
-import type { WorkspaceApi, WorkspaceDocumentResult } from "./workspaceApi";
 
 export interface PanelConfig {
   id: string;
@@ -22,21 +21,18 @@ export interface Workspace {
   layoutVersion: number;
   panels: PanelConfig[];
   layout: unknown; // dockview serialized layout JSON
+  // Per-link-group focused symbol (LinkGroups.focused), persisted so a refresh
+  // doesn't lose "which symbol is this group currently following" — LinkGroups
+  // itself is rebuilt in-memory (empty) on every page load. Optional: absent in
+  // any workspace doc saved before this field existed.
   groups?: Partial<Record<Exclude<LinkGroup, null>, string>>;
+  // Per-link-group focused venue (LinkGroups.focusedVenues), persisted beside
+  // `groups`. Optional: absent in any workspace doc saved before this field.
   linkVenues?: Partial<Record<Exclude<LinkGroup, null>, VenueID>>;
   scannerSync?: ScannerSyncConfig;
 }
 
 type WorkspaceChangeListener = () => void;
-type CatalogChangeListener = () => void;
-type WorkspaceMessage = { kind: string; topic: string; payload: unknown };
-
-interface WorkspaceClient {
-  sendCommand(name: string, args: unknown): Promise<{ status: string; value?: unknown; reason?: string }>;
-  workspace?: WorkspaceApi;
-  subscribe?: (topic: "workspace", listener: (message: WorkspaceMessage) => void) => () => void;
-  onState?: (listener: (state: string) => void) => void;
-}
 
 export function blankWorkspace(name: string): Workspace {
   return { name, layoutVersion: WORKSPACE_LAYOUT_VERSION, panels: [], layout: null };
@@ -51,35 +47,36 @@ export function isCurrentWorkspace(value: unknown): value is Workspace {
     && "layout" in workspace;
 }
 
-// Auto-saves the Dockview document through WorkspaceService in native mode.
-// The generic config commands remain only for the HTTP/browser fallback.
+interface CommandClient {
+  sendCommand(name: string, args: unknown): Promise<{ status: string; value?: unknown }>;
+}
+
+// Auto-saves the dockview layout + panel configs to the engine's config store
+// (config key `workspace.<name>`), debounced. Loads the saved doc, or a blank
+// workspace when none exists (no seed fallback — seeds are opt-in presets, Task 7/10).
 export class WorkspaceStore {
   private readonly pending = new Map<string, Workspace>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly changeListeners = new Map<string, Set<WorkspaceChangeListener>>();
-  private readonly catalogListeners = new Set<CatalogChangeListener>();
-  private readonly revisions = new Map<string, number>();
-  private readonly inFlight = new Map<string, Promise<void>>();
-  private catalogRevision = 0;
-  private readonly disposeStream: (() => void) | undefined;
-  private connected = false;
+  private readonly changeChannel: BroadcastChannel | null;
 
-  constructor(private readonly client: WorkspaceClient, private readonly debounceMs = 500, private readonly api = client.workspace) {
-    // Subscribe before the first snapshot fetch so a concurrent mutation cannot
-    // land between registration and load.
-    this.disposeStream = client.subscribe?.("workspace", (message) => this.onMessage(message));
-    client.onState?.((state) => {
-      if (state !== "open") return;
-      if (this.connected) this.refreshAll();
-      this.connected = true;
+  constructor(private readonly client: CommandClient, private readonly debounceMs = 500) {
+    this.changeChannel = typeof window !== "undefined" && typeof BroadcastChannel !== "undefined"
+      ? new BroadcastChannel("etape.workspace")
+      : null;
+    this.changeChannel?.addEventListener("message", (event) => {
+      const workspaceId = (event.data as { workspaceId?: unknown })?.workspaceId;
+      if (typeof workspaceId !== "string") return;
+      this.changeListeners.get(workspaceId)?.forEach((listener) => listener());
     });
   }
 
   async load(name: string, seed?: Workspace): Promise<Workspace> {
-    if (this.api) return this.loadCanonical(name, seed);
     const key = `workspace.${name}`;
     const ack = await this.client.sendCommand("GetConfig", { key });
-    if (ack.status === "accepted" && ack.value && isCurrentWorkspace(ack.value)) return ack.value;
+    if (ack.status === "accepted" && ack.value && isCurrentWorkspace(ack.value)) {
+      return ack.value;
+    }
     if (ack.status === "accepted" && seed && typeof ack.value === "object" && ack.value !== null) {
       const legacy = ack.value as Partial<Workspace>;
       if (Array.isArray(legacy.panels) && "layout" in legacy) {
@@ -96,7 +93,9 @@ export class WorkspaceStore {
       return blank;
     }
     const blank = blankWorkspace(name);
-    if (ack.status === "accepted" && ack.value) await this.client.sendCommand("SetConfig", { key, value: blank });
+    if (ack.status === "accepted" && ack.value) {
+      await this.client.sendCommand("SetConfig", { key, value: blank });
+    }
     return blank;
   }
 
@@ -106,7 +105,7 @@ export class WorkspaceStore {
     if (timer) clearTimeout(timer);
     this.timers.set(ws.name, setTimeout(() => {
       this.timers.delete(ws.name);
-      void this.writeNow(ws.name).catch(() => {});
+      void this.writeNow(ws.name);
     }, this.debounceMs));
   }
 
@@ -120,122 +119,22 @@ export class WorkspaceStore {
     };
   }
 
-  watchCatalog(listener: CatalogChangeListener): () => void {
-    this.catalogListeners.add(listener);
-    return () => this.catalogListeners.delete(listener);
-  }
-
-  // Kept for callers that want to refresh their own local projection. Native
-  // peers receive the same hint through the owning Workspace Stream.
-  notify(name: string): void { this.notifyWorkspace(name); }
-
-  dispose(): void {
-    this.disposeStream?.();
-    for (const timer of this.timers.values()) clearTimeout(timer);
-    this.timers.clear();
+  notify(name: string): void {
+    this.changeChannel?.postMessage({ workspaceId: name });
   }
 
   async flush(): Promise<void> {
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
-    for (;;) {
-      while (this.pending.size > 0 || this.inFlight.size > 0) {
-        const names = new Set([...this.pending.keys(), ...this.inFlight.keys()]);
-        await Promise.all([...names].map((name) => this.writeNow(name)));
-      }
-      if (!this.api) return;
-      const result = await this.api.flush();
-      if (result.status !== "accepted") throw new Error(result.reason ?? "Could not durably flush workspace state.");
-      if (this.pending.size === 0 && this.inFlight.size === 0) return;
-    }
-  }
-
-  private async loadCanonical(name: string, seed?: Workspace): Promise<Workspace> {
-    const result = await this.api!.load(name);
-    this.recordDocument(result);
-    if (result.status === "accepted" && isCurrentWorkspace(result.document)) return result.document;
-    if (result.status === "blocked" && seed && this.isMissing(result)) {
-      const saved = await this.api!.save({ workspaceId: name, document: seed, expectedRevision: result.revision });
-      this.recordDocument(saved);
-      if (saved.status === "accepted") return seed;
-      return this.loadCanonical(name);
-    }
-    if (result.status === "accepted" && result.document && seed) {
-      const legacy = result.document as Partial<Workspace>;
-      if (Array.isArray(legacy.panels) && "layout" in legacy) return { ...legacy, name, layoutVersion: WORKSPACE_LAYOUT_VERSION } as Workspace;
-    }
-    return blankWorkspace(name);
+    while (this.pending.size > 0) await Promise.all([...this.pending.keys()].map((name) => this.writeNow(name)));
   }
 
   private async writeNow(name: string): Promise<void> {
-    const inFlight = this.inFlight.get(name);
-    if (inFlight) {
-      return inFlight.then(() => {
-        if (this.inFlight.get(name) === inFlight) this.inFlight.delete(name);
-        if (this.pending.has(name)) return this.writeNow(name);
-      });
-    }
-    const write = this.performWrite(name);
-    this.inFlight.set(name, write);
-    void write.finally(() => {
-      if (this.inFlight.get(name) === write) this.inFlight.delete(name);
-    }).catch(() => {});
-    return write;
-  }
-
-  private async performWrite(name: string): Promise<void> {
     const ws = this.pending.get(name);
     if (!ws) return;
     this.pending.delete(name);
-    try {
-      if (!this.api) {
-        const ack = await this.client.sendCommand("SetConfig", { key: `workspace.${ws.name}`, value: ws });
-        if (ack.status !== "accepted") throw new Error(ack.reason ?? "Could not save workspace.");
-        this.notifyWorkspace(ws.name);
-        return;
-      }
-      const result = await this.api.save({ workspaceId: ws.name, document: ws, expectedRevision: this.revisions.get(name) ?? 0 });
-      if (result.status !== "accepted") throw new Error(result.reason ?? "Could not save workspace.");
-      this.recordDocument(result);
-      this.notifyWorkspace(ws.name);
-    } catch (error) {
-      if (!this.pending.has(name)) this.pending.set(name, ws);
-      throw error;
-    }
-  }
-
-  private onMessage(message: WorkspaceMessage): void {
-    if (message.topic !== "workspace" || !message.payload || typeof message.payload !== "object") return;
-    const payload = message.payload as { workspaceId?: unknown; kind?: unknown; revision?: unknown };
-    const workspaceId = typeof payload.workspaceId === "string" ? payload.workspaceId : "";
-    const revision = typeof payload.revision === "number" && Number.isSafeInteger(payload.revision) ? payload.revision : 0;
-    if (revision <= 0) return;
-    const current = workspaceId ? (this.revisions.get(workspaceId) ?? 0) : this.catalogRevision;
-    if (revision <= current) return;
-    const gap = current > 0 && revision > current + 1;
-    if (workspaceId) this.revisions.set(workspaceId, revision);
-    else this.catalogRevision = revision;
-    if (workspaceId) {
-      if (payload.kind === "document" || gap) this.changeListeners.get(workspaceId)?.forEach((listener) => listener());
-    } else if (payload.kind === "catalog" || gap) {
-      this.catalogListeners.forEach((listener) => listener());
-    }
-  }
-
-  private recordDocument(result: WorkspaceDocumentResult): void {
-    if (result.revision > (this.revisions.get(result.workspaceId) ?? 0)) this.revisions.set(result.workspaceId, result.revision);
-  }
-
-  private isMissing(result: WorkspaceDocumentResult): boolean {
-    return result.reason === "workspace document is missing" || result.revision === 0;
-  }
-
-  private notifyWorkspace(name: string): void {
-    this.changeListeners.get(name)?.forEach((listener) => listener());
-  }
-
-  private refreshAll(): void {
-    this.catalogListeners.forEach((listener) => listener());
-    this.changeListeners.forEach((listeners) => listeners.forEach((listener) => listener()));
+    const key = `workspace.${ws.name}`;
+    const ack = await this.client.sendCommand("SetConfig", { key, value: ws });
+    if (ack.status === "accepted") this.notify(ws.name);
   }
 }

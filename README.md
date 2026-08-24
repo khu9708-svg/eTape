@@ -62,9 +62,9 @@ and the broker of your choice for execution, and everything else is free and ope
 - **Every session recorded.** An always-on SQLite journal captures the full feed —
   quotes, ticks, books, bars — so any day can be replayed through the same engine
   (the E2E suite runs on this too).
-- **Local-first and private.** The explicit user profile stores config, credentials,
-  and the journal in `~/.eTape/` on your disk. Development, demo, replay, and tests
-  use isolated roots by default. The UI is served from `127.0.0.1`.
+- **Local-first and private.** Config, credentials, and the journal live in `~/.eTape/`
+  on your disk. The UI is served from `127.0.0.1`. Your API keys talk to your broker
+  and no one else.
 
 ## Features
 
@@ -179,15 +179,11 @@ moomoo's [OpenAPI](https://openapi.moomoo.com/) program. One-time setup:
    [OpenAPI portal](https://openapi.moomoo.com/).
 3. **Launch OpenD and log in** with your moomoo credentials. By default it listens on
    `127.0.0.1:11111`, which is where eTape expects it.
-4. Run eTape in live mode with an isolated profile:
+4. Run eTape in live mode:
 
    ```bash
    ./run.sh live          # Windows: run.cmd live
    ```
-
-   To deliberately open the existing user profile, add
-   `-profile user -allow-real-profile`. This opt-in is not used by tests,
-   demos, replay, prototypes, or server mode.
 
 Then just type a ticker in any panel — the engine subscribes on demand, and the
 scanner keeps the day's leading symbols warm automatically.
@@ -221,13 +217,11 @@ The easiest way to add one is in-app: **Settings → Venues** lets you add a ven
 enter API credentials, and test the connection; it writes the config for you (with an
 automatic backup of your previous `config.toml`).
 
-Credentials are stored locally in the selected profile's `credentials.json` and
-are only ever sent to the broker they belong to. An explicitly opted-in user run
-uses `~/.eTape/credentials.json`; isolated development and practice profiles
-cannot read it. moomoo is the exception — it has no API key/secret at all; it
-authenticates over the same local OpenD connection as market data, keyed by
-account ID, and trade unlock happens once per OpenD restart in the OpenD GUI
-itself (never inside eTape).
+Credentials are stored locally in `~/.eTape/credentials.json` and are only ever sent
+to the broker they belong to. moomoo is the exception — it has no API key/secret at
+all; it authenticates over the same local OpenD connection as market data, keyed by
+account ID, and trade unlock happens once per OpenD restart in the OpenD GUI itself
+(never inside eTape).
 
 Before any order reaches a broker it must pass the **two-layer risk gate** — global
 caps (max day loss, per-symbol position value/shares) and per-venue caps (max order
@@ -259,11 +253,7 @@ are deliberately never used for this.
 
 ## Configuration
 
-An explicitly opted-in user or migration run stores files in `~/.eTape/`
-(`%USERPROFILE%\.eTape\` on Windows). Development and automated runs resolve
-config, credentials, database, and logs inside an isolated profile root:
-`-profile test|prototype|replay|server|migration -data-root <path>` or a fresh temporary
-root when `-data-root` is omitted.
+Everything lives in `~/.eTape/` (`%USERPROFILE%\.eTape\` on Windows):
 
 | File | Purpose |
 |---|---|
@@ -285,7 +275,7 @@ daily_years = 0
 A minimal hand-written config with a paper simulator and tight risk caps:
 
 ```toml
-# <profile-root>/config.toml — every omitted field falls back to a sane default
+# ~/.eTape/config.toml — every omitted field falls back to a sane default
 
 [[venue]]
 id = "sim-paper"
@@ -322,25 +312,6 @@ and a system-tray icon, no console window, no installer. `make release-macos` do
 same for macOS (arm64). The engine is pure Go (no cgo), so cross-compiling from any OS
 just works. Prebuilt binaries for both platforms are attached to the
 [latest release](https://github.com/earlisreal/eTape/releases/latest).
-
-### Native Wails shell (migration path)
-
-The pinned Wails v3 shell is built from the `engine` module with no global CLI:
-
-```text
-cd engine
-go tool wails3 task dev             # Wails + Vite development shell
-go tool wails3 task build           # Windows 11 x64 embedded shell
-go tool wails3 task server-test     # headless Wails composition check
-go tool wails3 task package         # unsigned per-user NSIS smoke package
-```
-
-The package installs under `%LOCALAPPDATA%\Programs\eTape`. Keep Wails beta
-upgrades atomic across `engine/go.mod`, `ui/package.json`/lockfile, and generated
-build assets. The current shell includes native `workspace:<id>` window identity,
-tray reopen, second-launch activation, frameless caption controls, and OS-native
-resize/snap behavior with composition hosting disabled; engine-service wiring and
-the full installer remain later migration work.
 
 ### Race tests with MinGW-w64
 
@@ -408,37 +379,8 @@ prototypes/ Python research scripts (latency benchmarks, tick aggregation, …)
 | Engine lint / vet | `cd engine && golangci-lint run` / `go vet ./...` |
 | UI unit tests | `cd ui && npm test` |
 | UI typecheck / lint | `cd ui && npm run typecheck` / `npm run lint` |
-| E2E (Playwright, real engine in isolated server profile) | `cd ui && npm run e2e` |
+| E2E (Playwright, real engine in replay mode) | `cd ui && npm run e2e` |
 | Regenerate TS wire types from Go | `mingw32-make -C engine gen-ts` (`gen-ts-check` to verify drift) |
-
-### Wails migration focused gate
-
-While the Wails v3 migration tickets are open, the ticket-07 transport gate is
-the following focused set (use the repository-local Go caches):
-
-```powershell
-$env:GOCACHE = (Join-Path (Get-Location) "engine/.tmp-gocache")
-$env:GOMODCACHE = (Join-Path (Get-Location) "engine/.tmp-gomodcache")
-go -C engine test ./internal/uihub
-go -C engine test -tags wails ./internal/wailsruntime
-go -C engine test -tags wails ./cmd/etape
-go -C engine test -tags "wails,server" ./cmd/etape
-go -C engine test -race -tags wails ./internal/uihub ./internal/wailsruntime ./cmd/etape
-cd ui
-npm exec vitest -- run --project wire
-npm run typecheck
-cd ..
-git diff --check
-```
-
-The server test is test-only: it creates a temporary `server` profile, uses a
-loopback random port, waits for `/health` and binding-level
-`Capabilities.EnginePhase=ready`, and exercises the generated runtime plus
-`etape.runtime` Stream handler. Packaged/native Wails smoke, Playwright E2E,
-synth/demo checks, 100 reloads/100 lifecycle cycles, the four-Stream ten-second
-soak, unrelated UI golden/panel suites, and the full-repository race suite are
-merge-gate checks deferred during migration; they must remain present and
-must not be replaced by the legacy HTTP bridge.
 
 ### CI-equivalent validation on Windows
 

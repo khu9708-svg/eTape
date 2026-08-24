@@ -6,7 +6,6 @@ import { useOrderConfig } from "./exec/useOrderConfig";
 import { useTheme } from "./ThemeProvider";
 import { Button } from "./controls/Button";
 import type { AckMsg } from "../wire/contract";
-import type { MutationClient } from "../wire/mutations";
 import type { ToastApi } from "./Toast";
 import type { Workspace } from "./workspace";
 import type { ConnState } from "../wire/WsClient";
@@ -24,7 +23,7 @@ const NAV: { id: SettingsSection; label: string }[] = [
 export function SettingsModal({ open, section, onSection, onClose, commands, getWorkspace, onImportWorkspace, toast, engineState, health, exec, session }:
   {
     open: boolean; section: SettingsSection; onSection: (s: SettingsSection) => void; onClose: () => void;
-    commands: { sendCommand(name: string, args: unknown): Promise<AckMsg>; mutations?: MutationClient };
+    commands: { sendCommand(name: string, args: unknown): Promise<AckMsg> };
     getWorkspace: () => Workspace; onImportWorkspace: (ws: Workspace) => void; toast: ToastApi;
     // Optional (not required, unlike FeedStatusBanner's engineState) so
     // existing tests that render SettingsModal without it keep compiling;

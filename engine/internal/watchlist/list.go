@@ -32,11 +32,10 @@ type configStore interface {
 // for concurrent Add/Remove (conn goroutine) + Symbols (poller goroutine) +
 // Seed (demo boot).
 type List struct {
-	st       configStore
-	mu       sync.Mutex
-	syms     []string // insertion order; authoritative payload order
-	cap      int
-	revision uint64
+	st   configStore
+	mu   sync.Mutex
+	syms []string // insertion order; authoritative payload order
+	cap  int
 }
 
 // NewList loads config key "watchlist" (a JSON string array); an absent key
@@ -77,79 +76,50 @@ func Normalize(raw string) string {
 	return "US." + s
 }
 
-// AddWithRevision normalizes and appends symbol, returning the exact resulting
-// list revision while holding the same lock as the mutation.
-func (l *List) AddWithRevision(symbol string) (bool, []string, uint64, error) {
+// Add normalizes and appends symbol, returning added=false for a duplicate
+// (harmless no-op) and ErrFull past the cap. Persists + Flushes on a real add.
+func (l *List) Add(symbol string) (bool, error) {
 	sym := Normalize(symbol)
 	if sym == "" {
-		syms, revision := l.Snapshot()
-		return false, syms, revision, nil
+		return false, nil
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for _, s := range l.syms {
 		if s == sym {
-			return false, append([]string(nil), l.syms...), l.revision, nil
+			return false, nil
 		}
 	}
 	if len(l.syms) >= l.cap {
-		return false, append([]string(nil), l.syms...), l.revision, ErrFull
+		return false, ErrFull
 	}
 	l.syms = append(l.syms, sym)
-	l.revision++
 	l.persistLocked()
-	return true, append([]string(nil), l.syms...), l.revision, nil
+	return true, nil
 }
 
-// Add normalizes and appends symbol, returning added=false for a duplicate
-// (harmless no-op) and ErrFull past the cap. Persists + Flushes on a real add.
-func (l *List) Add(symbol string) (bool, error) {
-	added, _, _, err := l.AddWithRevision(symbol)
-	return added, err
-}
-
-// RemoveWithRevision deletes symbol if present and returns the exact resulting
-// list revision while holding the same lock as the mutation.
-func (l *List) RemoveWithRevision(symbol string) (bool, []string, uint64) {
+// Remove deletes symbol if present (idempotent); persists on a real removal.
+func (l *List) Remove(symbol string) bool {
 	sym := Normalize(symbol)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for i, s := range l.syms {
 		if s == sym {
 			l.syms = append(l.syms[:i], l.syms[i+1:]...)
-			l.revision++
 			l.persistLocked()
-			return true, append([]string(nil), l.syms...), l.revision
+			return true
 		}
 	}
-	return false, append([]string(nil), l.syms...), l.revision
-}
-
-// Remove deletes symbol if present (idempotent); persists on a real removal.
-func (l *List) Remove(symbol string) bool {
-	removed, _, _ := l.RemoveWithRevision(symbol)
-	return removed
-}
-
-// Snapshot returns a copy of the insertion-ordered membership and its exact
-// revision from one lock acquisition.
-func (l *List) Snapshot() ([]string, uint64) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	out := make([]string, len(l.syms))
-	copy(out, l.syms)
-	return out, l.revision
+	return false
 }
 
 // Symbols returns a copy in insertion order.
 func (l *List) Symbols() []string {
-	out, _ := l.Snapshot()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]string, len(l.syms))
+	copy(out, l.syms)
 	return out
-}
-
-func (l *List) Revision() uint64 {
-	_, revision := l.Snapshot()
-	return revision
 }
 
 // Seed replaces the whole list (demo boot: trusted synth universe, no probe).
@@ -160,7 +130,6 @@ func (l *List) Seed(symbols []string) {
 	for _, s := range symbols {
 		l.syms = append(l.syms, Normalize(s))
 	}
-	l.revision++
 	l.persistLocked()
 }
 

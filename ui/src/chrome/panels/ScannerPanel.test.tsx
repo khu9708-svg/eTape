@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, act, fireEvent, cleanup, within, waitFor } from "@testing-library/react";
+import { render, screen, act, fireEvent, cleanup, within } from "@testing-library/react";
 import { ThemeProvider } from "../ThemeProvider";
-import { ToastProvider } from "../Toast";
 import { LinkGroups } from "../linkGroups";
 import { makeStores } from "../../data/registry";
 import { ScannerPanel } from "./ScannerPanel";
@@ -36,7 +35,7 @@ function renderPanel(
   const commands = { sendCommand: vi.fn(async () => ({ status: "accepted" })) };
   const props = { config, stores, linkGroups, onConfigChange, scheduler: {} as never,
     width: 400, height: 300, commands, group: groupProp, scannerSync } as unknown as PanelProps;
-  const view = render(<ThemeProvider><ToastProvider><PanelHeaderSlotContext.Provider value={headerSlot}><ScannerPanel {...props} /></PanelHeaderSlotContext.Provider></ToastProvider></ThemeProvider>);
+  const view = render(<ThemeProvider><PanelHeaderSlotContext.Provider value={headerSlot}><ScannerPanel {...props} /></PanelHeaderSlotContext.Provider></ThemeProvider>);
   return { scanner, focus, onConfigChange, commands, ...view };
 }
 
@@ -374,14 +373,14 @@ describe("ScannerPanel", () => {
     expect(commands.sendCommand).toHaveBeenCalledWith("SetScannerFilters", { filters: expect.objectContaining({ minVolumeRatio: 2.5 }) });
   });
 
-  it("offers Most active, hides change threshold, persists it, and resets sort to volume descending", async () => {
+  it("offers Most active, hides change threshold, persists it, and resets sort to volume descending", () => {
     const { commands, onConfigChange } = renderPanel();
     fireEvent.click(screen.getByRole("button", { name: /filters/i }));
     fireEvent.change(screen.getByLabelText("rank mode"), { target: { value: "most_active" } });
     expect(screen.queryByLabelText("min gain %")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     expect(commands.sendCommand).toHaveBeenCalledWith("SetScannerFilters", { filters: expect.objectContaining({ mode: "most_active" }) });
-    await waitFor(() => expect(onConfigChange).toHaveBeenCalledWith({ sort: { col: "vol", dir: "desc" } }));
+    expect(onConfigChange).toHaveBeenCalledWith({ sort: { col: "vol", dir: "desc" } });
   });
 
   it("labels extended-hours Most active as approximate", () => {

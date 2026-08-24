@@ -1,4 +1,4 @@
-//go:build tray && !wails
+//go:build tray
 
 // This file supplies the Windows release entrypoint for cmd/etape: a system-
 // tray icon (no console window) instead of a plain console process.
