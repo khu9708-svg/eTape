@@ -24,6 +24,15 @@ export function formatCompactShares(n: number | null): string {
 	return `${Math.round(n)}`;
 }
 
+/** Relative-volume multiplier: keep two decimals, then compact K/M values. */
+export function formatRelativeVolume(n: number | null): string {
+  if (n === null || !Number.isFinite(n)) return "—";
+  const abs = Math.abs(n);
+  if (abs >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${(n / 1e3).toFixed(2)}K`;
+  return n.toFixed(2);
+}
+
 /** Reported short-interest shares with two decimals per compact suffix. */
 export function formatShortInterest(n: number | null): string {
 	if (n === null || !Number.isFinite(n)) return "—";

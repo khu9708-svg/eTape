@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatChangePct, formatCompactShares, formatShortInterest, msUntilEtMidnight } from "./format";
+import { formatChangePct, formatCompactShares, formatRelativeVolume, formatShortInterest, msUntilEtMidnight } from "./format";
 
 describe("formatChangePct — 3-digit-safe, never fabricates 0%", () => {
   it("signs and rounds to one decimal", () => {
@@ -29,6 +29,21 @@ describe("formatCompactShares", () => {
   it("null (unknown) is em dash, but 0 is a real 0", () => {
     expect(formatCompactShares(null)).toBe("—");
     expect(formatCompactShares(0)).toBe("0");
+  });
+});
+
+describe("formatRelativeVolume", () => {
+  it("keeps two decimals below K and compacts K/M values", () => {
+    expect(formatRelativeVolume(1.234)).toBe("1.23");
+    expect(formatRelativeVolume(999.999)).toBe("1000.00");
+    expect(formatRelativeVolume(1_234.5)).toBe("1.23K");
+    expect(formatRelativeVolume(1_234_567)).toBe("1.23M");
+  });
+  it("keeps unavailable values distinct from zero", () => {
+    expect(formatRelativeVolume(null)).toBe("—");
+    expect(formatRelativeVolume(Number.NaN)).toBe("—");
+    expect(formatRelativeVolume(Number.POSITIVE_INFINITY)).toBe("—");
+    expect(formatRelativeVolume(0)).toBe("0.00");
   });
 });
 

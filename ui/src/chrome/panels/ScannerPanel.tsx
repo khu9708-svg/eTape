@@ -5,7 +5,7 @@ import type { ScannerFilters, ScannerSession } from "../../wire/contract";
 import { useTheme } from "../ThemeProvider";
 import { FONTS } from "../../render/palette";
 import { formatTapeTime } from "../../render/format";
-import { appendSsrMarker, formatChangePct, formatCompactShares, formatShortInterest, msUntilEtMidnight } from "../format";
+import { appendSsrMarker, formatChangePct, formatCompactShares, formatRelativeVolume, formatShortInterest, msUntilEtMidnight } from "../format";
 import { formatFilterSummary } from "./scannerFilter";
 import { toggleSort, sortIndicator, type SortState } from "../sortColumns";
 import { bareSymbol } from "../exec/orderStatus";
@@ -211,7 +211,7 @@ export function ScannerPanel(
                 <td style={numCell}>{r.last === null ? "—" : r.last.toFixed(2)}</td>
                 <td style={numCell}>{formatCompactShares(r.floatShares)}</td>
                 <td style={numCell}>{formatCompactShares(r.volume)}</td>
-                <td style={numCell}>{r.relativeVolume == null ? "—" : r.relativeVolume.toFixed(2)}</td>
+                <td style={numCell}>{formatRelativeVolume(r.relativeVolume)}</td>
                 <td style={numCell} title={r.shortInterestAsOf ? `as of ${r.shortInterestAsOf}` : undefined}>{formatShortInterest(r.shortInterest)}</td>
               </tr>
               );
