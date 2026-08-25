@@ -152,7 +152,7 @@ export function ScannerPanel(
   const symCell = { textAlign: "left" as const, padding: "2px 8px", fontFamily: FONTS.mono, fontWeight: 600 };
   const numCell = { padding: "2px 8px", fontFamily: FONTS.mono, fontWeight: 500, fontVariantNumeric: "tabular-nums" as const };
   return (
-    <div style={{ height: "100%", overflow: "auto", position: "relative", background: palette.bg, color: palette.text, fontSize: 12 }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", position: "relative", background: palette.bg, color: palette.text, fontSize: 12 }}>
       {headerSlot === undefined ? headerControls : headerSlot ? createPortal(headerControls, headerSlot) : null}
       {!cv.refreshedAt && <div style={{ padding: "6px 8px", color: palette.textMuted, borderBottom: `1px solid ${palette.border}` }}>Waiting for scanner data…</div>}
       {filtersOpen && (
@@ -177,49 +177,51 @@ export function ScannerPanel(
           {filters.mode === "most_active" ? `Most active${cv.session === "rth" ? "" : " · approximate"}` : filters.mode === "gainers" ? "Top gainers" : "Top losers"} · {formatFilterSummary({ minChangePct: filters.mode === "most_active" ? 0 : filters.minChangePct, floatCapShares: filters.maxFloatShares, minVolume: filters.minVolume, minRelativeVolume: filters.minRelativeVolume })}
         </div>
       )}
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr style={{ color: palette.textMuted, textAlign: "right" }}>
-            {COLUMNS.map((c) => (
-              <th key={c.col} style={{ ...th, textAlign: c.align, cursor: "pointer" }} onClick={() => clickSort(c.col)}
-                className={`col-head sortable${sort?.col === c.col ? " sort-active" : ""}`}>
-                {c.label} {sortIndicator(sort, c.col)}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const selected = r.symbol === selectedSymbol;
-            return (
-            <tr key={r.symbol}
-              onClick={() => { setSelectedSymbol(r.symbol); if (cv.session) stores.scanner.markSeen(cv.session, r.symbol); }}
-              onDoubleClick={() => { if (cv.session) stores.scanner.markSeen(cv.session, r.symbol); linkGroups.focus(group ?? "green", r.symbol); }}
-              onContextMenu={(e) => { e.preventDefault(); if (cv.session) stores.scanner.markSeen(cv.session, r.symbol); setMenu({ clientX: e.clientX, clientY: e.clientY, symbol: r.symbol }); }}
-              onMouseEnter={() => setHoveredSymbol(r.symbol)}
-              onMouseLeave={() => setHoveredSymbol((h) => (h === r.symbol ? null : h))}
-              style={{ cursor: "pointer", textAlign: "right", userSelect: "none", fontWeight: r.isUnseen ? 700 : undefined,
-                background: selected ? "rgba(154,106,27,.16)" : r.isUnseen ? "rgba(154,106,27,.10)"
-                  : hoveredSymbol === r.symbol ? "rgba(154,106,27,.06)" : "transparent",
-                boxShadow: selected ? `inset 0 0 0 1px ${palette.accent}` : r.isUnseen ? `inset 2px 0 0 ${palette.accent}` : "none",
-                transition: "background 120ms ease" }}>
-              <td style={symCell} title={r.shortSellRestricted ? "Short Sell Restricted — derived Rule 201 estimate" : undefined}>
-                {appendSsrMarker(bareSymbol(r.symbol), r.shortSellRestricted)}
-              </td>
-              <td style={{ ...numCell, color: r.changePct === null ? palette.textMuted : r.changePct > 0 ? palette.up : r.changePct < 0 ? palette.down : palette.text }}>{formatChangePct(r.changePct)}</td>
-              <td style={numCell}>{r.last === null ? "—" : r.last.toFixed(2)}</td>
-              <td style={numCell}>{formatCompactShares(r.floatShares)}</td>
-              <td style={numCell}>{formatCompactShares(r.volume)}</td>
-              <td style={numCell}>{r.relativeVolume == null ? "—" : r.relativeVolume.toFixed(2)}</td>
-              <td style={numCell} title={r.shortInterestAsOf ? `as of ${r.shortInterestAsOf}` : undefined}>{formatShortInterest(r.shortInterest)}</td>
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ color: palette.textMuted, textAlign: "right" }}>
+              {COLUMNS.map((c) => (
+                <th key={c.col} style={{ ...th, textAlign: c.align, cursor: "pointer" }} onClick={() => clickSort(c.col)}
+                  className={`col-head sortable${sort?.col === c.col ? " sort-active" : ""}`}>
+                  {c.label} {sortIndicator(sort, c.col)}
+                </th>
+              ))}
             </tr>
-            );
-          })}
-          {rows.length === 0 && cv.refreshedAt && (
-            <tr><td colSpan={7} style={{ padding: 12, color: palette.textMuted, textAlign: "center" }}>No symbols match current filters.</td></tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const selected = r.symbol === selectedSymbol;
+              return (
+              <tr key={r.symbol}
+                onClick={() => { setSelectedSymbol(r.symbol); if (cv.session) stores.scanner.markSeen(cv.session, r.symbol); }}
+                onDoubleClick={() => { if (cv.session) stores.scanner.markSeen(cv.session, r.symbol); linkGroups.focus(group ?? "green", r.symbol); }}
+                onContextMenu={(e) => { e.preventDefault(); if (cv.session) stores.scanner.markSeen(cv.session, r.symbol); setMenu({ clientX: e.clientX, clientY: e.clientY, symbol: r.symbol }); }}
+                onMouseEnter={() => setHoveredSymbol(r.symbol)}
+                onMouseLeave={() => setHoveredSymbol((h) => (h === r.symbol ? null : h))}
+                style={{ cursor: "pointer", textAlign: "right", userSelect: "none", fontWeight: r.isUnseen ? 700 : undefined,
+                  background: selected ? "rgba(154,106,27,.16)" : r.isUnseen ? "rgba(154,106,27,.10)"
+                    : hoveredSymbol === r.symbol ? "rgba(154,106,27,.06)" : "transparent",
+                  boxShadow: selected ? `inset 0 0 0 1px ${palette.accent}` : r.isUnseen ? `inset 2px 0 0 ${palette.accent}` : "none",
+                  transition: "background 120ms ease" }}>
+                <td style={symCell} title={r.shortSellRestricted ? "Short Sell Restricted — derived Rule 201 estimate" : undefined}>
+                  {appendSsrMarker(bareSymbol(r.symbol), r.shortSellRestricted)}
+                </td>
+                <td style={{ ...numCell, color: r.changePct === null ? palette.textMuted : r.changePct > 0 ? palette.up : r.changePct < 0 ? palette.down : palette.text }}>{formatChangePct(r.changePct)}</td>
+                <td style={numCell}>{r.last === null ? "—" : r.last.toFixed(2)}</td>
+                <td style={numCell}>{formatCompactShares(r.floatShares)}</td>
+                <td style={numCell}>{formatCompactShares(r.volume)}</td>
+                <td style={numCell}>{r.relativeVolume == null ? "—" : r.relativeVolume.toFixed(2)}</td>
+                <td style={numCell} title={r.shortInterestAsOf ? `as of ${r.shortInterestAsOf}` : undefined}>{formatShortInterest(r.shortInterest)}</td>
+              </tr>
+              );
+            })}
+            {rows.length === 0 && cv.refreshedAt && (
+              <tr><td colSpan={7} style={{ padding: 12, color: palette.textMuted, textAlign: "center" }}>No symbols match current filters.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
       {menu && (
         <TVContextMenu chrome={menuChrome(palette)} x={menu.clientX} y={menu.clientY}
           items={buildRowMenuItems(menu.symbol)} onClose={() => setMenu(null)} />
