@@ -76,15 +76,15 @@ func relativeVolumeDays(now time.Time) []time.Time {
 	return days
 }
 
-func relativeVolumeArchiveRange(now time.Time) (fromMs, toMs int64, ok bool) {
+func relativeVolumeHistoryRange(now time.Time) (from, to time.Time, ok bool) {
 	et := now.In(session.Loc())
 	if !relativeVolumePhase(session.PhaseAt(et)) {
-		return 0, 0, false
+		return time.Time{}, time.Time{}, false
 	}
 	days := relativeVolumeDays(et)
-	from := relativeVolumeSessionStart(days[0])
-	to := session.Schedule(days[len(days)-1]).DataClose.Add(-time.Millisecond)
-	return from.UnixMilli(), to.UnixMilli(), true
+	from = relativeVolumeSessionStart(days[0])
+	to = session.Schedule(days[len(days)-1]).DataClose
+	return from, to, true
 }
 
 func addRelativeVolume(a, b int64) (int64, bool) {
@@ -94,8 +94,9 @@ func addRelativeVolume(a, b int64) (int64, bool) {
 	return a + b, true
 }
 
-// buildRelativeVolumeProfile accepts only complete historical dates, but it
-// may return a usable profile from any non-zero subset of the 15 dates.
+// buildRelativeVolumeProfile accepts exactly the 15 requested historical
+// dates. A missing minute inside a qualifying date is a zero-volume minute;
+// an entirely empty date makes the profile unavailable.
 func buildRelativeVolumeProfile(now time.Time, bars []feed.Bar) (*relativeVolumeProfile, bool) {
 	et := now.In(session.Loc())
 	current := session.Schedule(et)
@@ -131,56 +132,40 @@ func buildRelativeVolumeProfile(now time.Time, bars []feed.Bar) (*relativeVolume
 	}
 
 	var sums [relativeVolumeMaxMinutes]float64
-	validDays := 0
 	for _, day := range days {
 		s := session.Schedule(day)
 		key := s.Date.UnixMilli()
 		buckets := targets[key]
 		expected := int(s.DataClose.Sub(relativeVolumeSessionStart(s.Date)) / time.Minute)
-		if invalid[key] || expected <= 0 || len(buckets) != expected {
-			continue
+		if invalid[key] || expected <= 0 || len(buckets) == 0 {
+			return nil, false
 		}
 		var cumulative int64
 		var daySums [relativeVolumeMaxMinutes]float64
-		valid := true
 		for minute := 0; minute < expected; minute++ {
-			volume, present := buckets[minute]
-			if !present {
-				valid = false
-				break
-			}
 			daySums[minute] = float64(cumulative)
 			if math.IsInf(daySums[minute], 0) {
-				valid = false
-				break
+				return nil, false
 			}
+			volume := buckets[minute] // absent minute is an authoritative zero
 			next, ok := addRelativeVolume(cumulative, volume)
 			if !ok {
-				valid = false
-				break
+				return nil, false
 			}
 			cumulative = next
 		}
-		if valid {
-			validDays++
-			validDay[key] = true
-			for minute := 0; minute < expected; minute++ {
-				sums[minute] += daySums[minute]
-				if math.IsInf(sums[minute], 0) {
-					validDay[key] = false
-					validDays--
-					break
-				}
+		validDay[key] = true
+		for minute := 0; minute < expected; minute++ {
+			sums[minute] += daySums[minute]
+			if math.IsInf(sums[minute], 0) {
+				return nil, false
 			}
 		}
 	}
-	if validDays == 0 {
-		return nil, false
-	}
-	profile := &relativeVolumeProfile{day: current.Date.UnixMilli(), complete: validDays == relativeVolumeLookback}
+	profile := &relativeVolumeProfile{day: current.Date.UnixMilli(), complete: true}
 	for minute := 0; minute < relativeVolumeMaxMinutes; minute++ {
-		// counts are the number of valid historical days that reach this
-		// minute. A normal day reaches all 960 buckets; early-close days do not.
+		// counts are the number of qualifying historical days whose schedule
+		// reaches this minute. An early-close day contributes no later sample.
 		for _, day := range days {
 			s := session.Schedule(day)
 			expected := int(s.DataClose.Sub(relativeVolumeSessionStart(s.Date)) / time.Minute)
@@ -190,7 +175,7 @@ func buildRelativeVolumeProfile(now time.Time, bars []feed.Bar) (*relativeVolume
 		}
 		if profile.counts[minute] > 0 {
 			profile.means[minute] = sums[minute] / float64(profile.counts[minute])
-			if math.IsNaN(profile.means[minute]) || math.IsInf(profile.means[minute], 0) {
+			if profile.means[minute] <= 0 || math.IsNaN(profile.means[minute]) || math.IsInf(profile.means[minute], 0) {
 				profile.means[minute] = 0
 				profile.counts[minute] = 0
 			}
@@ -214,4 +199,16 @@ func relativeVolumeAt(profile *relativeVolumeProfile, now time.Time, currentVolu
 		return nil
 	}
 	return &value
+}
+
+func relativeVolumeProfileHasBaseline(profile *relativeVolumeProfile) bool {
+	if profile == nil {
+		return false
+	}
+	for minute := range profile.means {
+		if profile.counts[minute] > 0 && profile.means[minute] > 0 {
+			return true
+		}
+	}
+	return false
 }

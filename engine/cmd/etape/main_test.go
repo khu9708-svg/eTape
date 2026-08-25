@@ -10,11 +10,39 @@ import (
 	"github.com/earlisreal/eTape/engine/internal/broker/alpaca"
 	"github.com/earlisreal/eTape/engine/internal/broker/sim"
 	"github.com/earlisreal/eTape/engine/internal/clock"
+	"github.com/earlisreal/eTape/engine/internal/config"
 	"github.com/earlisreal/eTape/engine/internal/exec"
 	"github.com/earlisreal/eTape/engine/internal/feed"
+	histalpaca "github.com/earlisreal/eTape/engine/internal/hist/alpaca"
 	"github.com/earlisreal/eTape/engine/internal/md"
 	"github.com/earlisreal/eTape/engine/internal/session"
 )
+
+func TestScannerRELVolFetcherRequiresSIPAndLiveClient(t *testing.T) {
+	client := histalpaca.New("", "key", "secret", "sip", clock.System{})
+	if scannerRELVolFetcher(client, "sip", false) == nil {
+		t.Fatal("SIP historical client should enable Scanner REL VOL history")
+	}
+	if scannerRELVolFetcher(client, "iex", false) != nil {
+		t.Fatal("IEX configuration unexpectedly enabled Scanner REL VOL history")
+	}
+	if scannerRELVolFetcher(nil, "sip", false) != nil {
+		t.Fatal("missing client unexpectedly enabled Scanner REL VOL history")
+	}
+	if scannerRELVolFetcher(client, "sip", true) != nil {
+		t.Fatal("demo mode unexpectedly enabled Scanner REL VOL history")
+	}
+}
+
+func TestScannerRELVolFetcherIgnoresChartRetention(t *testing.T) {
+	cfg := config.Default()
+	cfg.Backfill.Enabled = false
+	cfg.Backfill.IntradayDays = 2
+	client := histalpaca.New("", "key", "secret", cfg.Backfill.Alpaca.Feed, clock.System{})
+	if scannerRELVolFetcher(client, cfg.Backfill.Alpaca.Feed, false) == nil {
+		t.Fatal("REL VOL history must not depend on chart backfill enablement or retention")
+	}
+}
 
 func TestNextHistoryRefreshUsesTradingCalendar(t *testing.T) {
 	loc := session.Loc()

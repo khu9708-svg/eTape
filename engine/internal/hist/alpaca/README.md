@@ -1,3 +1,3 @@
 # Alpaca History
 
-Fetches daily and one-minute market-data history. Free-SIP requests are capped at `now - 24h` for daily bars and `now - 16m` for one-minute bars. Only paper credentials may be reused automatically; live execution keys stay isolated. Normalize pagination, ordering, sessions. Test: `go test ./internal/hist/alpaca`.
+Fetches daily and one-minute market-data history. Free-SIP requests are capped at `now - 24h` for daily bars and `now - 16m` for one-minute bars; completed-session Scanner REL VOL requests pass through the same guard unchanged. The Scanner reuses this client's pagination and shared rate limiter for one bounded 04:00-to-data-close range covering the prior 15 NYSE sessions, then discards the raw bars after profile construction. Only paper credentials may be reused automatically; live execution keys stay isolated. Normalize pagination, ordering, sessions. Test: `go test ./internal/hist/alpaca`.

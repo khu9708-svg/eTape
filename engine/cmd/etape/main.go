@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -590,6 +591,7 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 	var demand demandFeeder
 	var tail backfill.TailFetcher
 	var dailyChain, intradayChain []backfill.Source
+	var scannerHistoryFetch func(context.Context, string, time.Time, time.Time) ([]feed.Bar, error)
 
 	wl, err := watchlist.NewList(st)
 	if err != nil {
@@ -637,18 +639,21 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 		hub.SetMarketClockSource(probe)
 		feedForHub, pollReq, mmProbe, demand = fd, client, probe, fd
 
-		if cfg.Backfill.Enabled {
-			var alpacaSrc *histalpaca.Client
-			if cfg.Backfill.Alpaca.Enabled {
-				if p, label, err := resolveBackfillAlpacaCreds(cfg, credsFile); err == nil {
-					alpacaSrc = histalpaca.New("", p.KeyID, p.SecretKey, cfg.Backfill.Alpaca.Feed, clock.System{})
-					log.Info("backfill: alpaca provider resolved", "from", label, "feed", cfg.Backfill.Alpaca.Feed)
-				} else if errors.Is(err, errAlpacaLiveCreds) {
-					log.Warn("backfill: refusing alpaca-live creds for read-only historical provider", "key", cfg.Backfill.Alpaca.CredsKey)
-				} else {
-					log.Warn("backfill: alpaca provider disabled (no creds)", "key", cfg.Backfill.Alpaca.CredsKey, "err", err)
-				}
+		var alpacaSrc *histalpaca.Client
+		if cfg.Backfill.Alpaca.Enabled {
+			if p, label, err := resolveBackfillAlpacaCreds(cfg, credsFile); err == nil {
+				alpacaSrc = histalpaca.New("", p.KeyID, p.SecretKey, cfg.Backfill.Alpaca.Feed, clock.System{})
+				log.Info("backfill: alpaca provider resolved", "from", label, "feed", cfg.Backfill.Alpaca.Feed)
+			} else if errors.Is(err, errAlpacaLiveCreds) {
+				log.Warn("backfill: refusing alpaca-live creds for read-only historical provider", "key", cfg.Backfill.Alpaca.CredsKey)
+			} else {
+				log.Warn("backfill: alpaca provider disabled (no creds)", "key", cfg.Backfill.Alpaca.CredsKey, "err", err)
 			}
+		}
+		if alpacaSrc != nil {
+			scannerHistoryFetch = scannerRELVolFetcher(alpacaSrc, cfg.Backfill.Alpaca.Feed, false)
+		}
+		if cfg.Backfill.Enabled {
 			if alpacaSrc != nil {
 				dailyChain = append(dailyChain, backfill.Source{Name: "alpaca", HistFetcher: alpacaSrc})
 				intradayChain = append(intradayChain, backfill.Source{Name: "alpaca", HistFetcher: alpacaSrc})
@@ -762,7 +767,7 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 			}
 		}
 	}
-	startPollers(ctx, cfg, pollReq, demand, hub, uihubClk, st, wl, hasTZVenue(cfg), mmProbe, accountPoller, firstAlpacaAssetReader(vbs), backfillOne, !*demo, &scanWG)
+	startPollers(ctx, cfg, pollReq, demand, hub, uihubClk, st, wl, hasTZVenue(cfg), mmProbe, accountPoller, firstAlpacaAssetReader(vbs), backfillOne, scannerHistoryFetch, !*demo, &scanWG)
 	mode := "live"
 	if *demo {
 		mode = "demo"
@@ -1162,9 +1167,16 @@ func restoreScannerFilters(cfg scannerFilterConfig, defaults wsmsg.ScannerFilter
 // startQuota gates the quota poller: false in -demo, since the synthetic
 // requester answers Qot_GetSubInfo with the generic "no data" response
 // rather than a real subscription budget, so tracking it would be noise.
-func startPollers(ctx context.Context, cfg config.Config, r pollerRequester, demand demandFeeder, hub *uihub.Hub, clk clock.Clock, st *store.Store, wl *watchlist.List, hasTZ bool, mmProbe rttProber, accountHealth health.AccountHealthSource, assetReader stockInfoAssetReader, backfillOne func(string), startQuota bool, scanWG *sync.WaitGroup) {
+func scannerRELVolFetcher(client *histalpaca.Client, feedName string, demo bool) func(context.Context, string, time.Time, time.Time) ([]feed.Bar, error) {
+	if demo || client == nil || !strings.EqualFold(strings.TrimSpace(feedName), "sip") {
+		return nil
+	}
+	return client.Intraday1m
+}
+
+func startPollers(ctx context.Context, cfg config.Config, r pollerRequester, demand demandFeeder, hub *uihub.Hub, clk clock.Clock, st *store.Store, wl *watchlist.List, hasTZ bool, mmProbe rttProber, accountHealth health.AccountHealthSource, assetReader stockInfoAssetReader, backfillOne func(string), relativeVolumeFetch func(context.Context, string, time.Time, time.Time) ([]feed.Bar, error), startQuota bool, scanWG *sync.WaitGroup) {
 	ssrResolver := ssr.New(st)
-	scanPoller := scan.New(cfg.Scan, r, hub, clk, demand, backfillOne, st.ReadBars1m, ssrResolver)
+	scanPoller := scan.New(cfg.Scan, r, hub, clk, demand, backfillOne, relativeVolumeFetch, ssrResolver)
 	_ = scanPoller.SetFilters(restoreScannerFilters(st, scan.Defaults(cfg.Scan)))
 	hub.SetScanner(scanPoller)
 	newsPlan := func() news.SymbolPlan { return newsSymbolPlan(scanPoller.PoolSymbols(), hub.ActiveDemandSymbols()) }

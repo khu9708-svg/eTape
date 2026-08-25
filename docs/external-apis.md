@@ -9,8 +9,10 @@
   startup with `GET /v2/assets?status=active`; Stock Info then uses in-memory
   lookups for the rest of the process. Paper credentials may also provide
   daily and one-minute history; live credentials are not reused for history.
-  See [adapter](../engine/internal/broker/alpaca/README.md) and [history
-  provider](../engine/internal/hist/alpaca/README.md).
+  Alpaca SIP one-minute history also supplies the Scanner's process-local
+  15-session REL VOL profiles when configured; IEX and unavailable clients
+  leave that column unavailable. See [adapter](../engine/internal/broker/alpaca/README.md)
+  and [history provider](../engine/internal/hist/alpaca/README.md).
 - **TradeZero:** live REST execution plus portfolio WebSocket events. No market-data dependency. See [adapter](../engine/internal/broker/tradezero/README.md).
 - **Yahoo Finance:** unauthenticated fallback daily history plus an
   off-by-default, experimental headline supplement (`[news].yahoo_enabled`),
@@ -24,15 +26,15 @@
 ## Contract facts
 
 - Symbols crossing OpenD use `US.<ticker>` form.
-- OpenD 3203 `SnapshotBasicData.volumeRatio` remains an optional provider field at the feed boundary; the Scanner does not consume or expose it. Scanner REL VOL is calculated from local 1-minute archive history and phase-cumulative snapshot volume.
+- OpenD 3203 `SnapshotBasicData.volumeRatio` remains an optional provider field at the feed boundary; the Scanner does not consume or expose it. Scanner REL VOL is calculated from live phase-cumulative Moomoo snapshot volume and a separate Alpaca SIP 1-minute profile; chart/archive history is not an input.
 - OpenD 3249 `Qot_GetShortInterest` is the source for Reported Short Interest. It accepts one US security per request; eTape requests `num = 1`, uses the newest returned `timestampStr`/`sharesShort` record, validates a JavaScript-safe share count, and preserves the raw value without split adjustment. The Scanner worker only requests admitted board symbols, caches results in memory for 24 hours, runs one request at a time at least one second apart, and stays within OpenD's 30-requests-per-30-seconds limit.
 - TICKER ticks drive time-and-sales and exchange-time-bucketed 10-second bars. K-line data drives one-minute and larger intraday bars. Daily history is fetched; weekly/monthly derive from daily.
 - OpenD `TickerType` is preserved as an exact raw value plus a stable `Trade-Report Condition` enum at the feed boundary. The single-writer market-data core stamps independent Range-Eligible, Last-Eligible, and Volume-Eligible permissions from the US condition matrix; unknown and unsupported values fail closed while remaining visible. `typeSign` and `PushDataType` are retained as diagnostics/provenance, and delivery source never changes eligibility. The UI-hub Significant Print classifier keeps its existing transaction-category rules; Aggressor Direction remains the feed's liquidity-taking side, not participant identity.
 - Cached OpenD ticker seeds are decoded and ordered chronologically before entering the same normalized tick path as live pushes. The startup seed is capped at 1,000 prints.
 - Subscription and historical-K-line quotas are separate. Multiple K-line periods for one symbol share one subscription slot; code centralizes demand and quota tracking.
 - Broker adapters normalize venue payloads into `exec` domain types. Risk gates and venue arming run before adapter submission.
-- Historical requests use completed offline-NYSE-calendar horizons and persisted explored-range coverage. A complete archive therefore makes no Alpaca/Yahoo request on weekends, holidays, or unchanged completed sessions; successful provider-empty intervals are also remembered.
-- Focused charts combine the configured archive windows with concurrent OpenD K_1M and K_DAY cache reads in one ordered core seed and one UI snapshot. Scanner/watch warming is archive-only and cannot occupy the focused foreground slot. Alpaca fills uncovered ranges into the archive asynchronously; Yahoo is the optional daily fallback. `intraday_days` applies to focused charts and scanner/watch warming; it and `daily_years` are plain calendar spans, including weekends and holidays, and newly archived bars appear on the next symbol open.
+- Historical chart/backfill requests use completed offline-NYSE-calendar horizons and persisted explored-range coverage. Scanner REL VOL is separate: for sticky-pool symbols it requests one bounded Alpaca SIP range covering exactly the prior 15 trading dates, including each day's 04:00-to-`DataClose` window. Alpaca's one-minute `now - 16m` safety cap remains in force, although Scanner requests never include the current day. Raw Scanner bars are not persisted in `bars_1m` or another table; only the compact in-memory profile survives until the ET-day cache expires.
+- Focused charts combine the configured archive windows with concurrent OpenD K_1M and K_DAY cache reads in one ordered core seed and one UI snapshot. Scanner/watch warming is archive-only and cannot occupy the focused foreground slot. Alpaca fills uncovered ranges into the archive asynchronously; Yahoo is the optional daily fallback. `intraday_days` applies to focused charts and generic scanner/watch warming, not REL VOL; it and `daily_years` are plain calendar spans, including weekends and holidays, and newly archived bars appear on the next symbol open.
 
 ## Estimated LULD boundary
 

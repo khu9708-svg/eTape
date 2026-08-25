@@ -1411,6 +1411,31 @@ func TestUpdatePoolEnsuresWatchDemandsAndBackfills(t *testing.T) {
 	}
 }
 
+func TestRelativeVolumeQueueUsesPoolOnly(t *testing.T) {
+	clk := clock.NewFake(et(2026, 7, 8, 14, 0))
+	symbols := make([]string, poolTrackN+1)
+	for i := range symbols {
+		symbols[i] = fmt.Sprintf("US.%02d", i)
+	}
+	p := New(config.Scan{}, &fakeReq{}, &capturePub{}, clk, &spyFeed{}, nil,
+		func(context.Context, string, time.Time, time.Time) ([]feed.Bar, error) { return nil, nil })
+
+	p.updatePool(clk.Now(), rows(symbols...))
+	p.enqueueRelativeVolumeForPool(clk.Now())
+
+	p.mu.RLock()
+	queued := append([]relativeVolumeRequest(nil), p.relativeVolumeQueue...)
+	p.mu.RUnlock()
+	if len(queued) != poolTrackN {
+		t.Fatalf("queued %d REL VOL requests, want %d", len(queued), poolTrackN)
+	}
+	for _, request := range queued {
+		if request.key.symbol == symbols[poolTrackN] {
+			t.Fatalf("transient non-pool row was queued: %+v", request)
+		}
+	}
+}
+
 func TestUpdatePoolReleasesOnDayReset(t *testing.T) {
 	sf := &spyFeed{}
 	clk := clock.NewFake(et(2026, 7, 8, 19, 0))
@@ -1463,7 +1488,7 @@ func TestPositiveRelativeVolumeFilterStillWarmsPool(t *testing.T) {
 	sf := &spyFeed{}
 	pub := &capturePub{}
 	clk := clock.NewFake(et(2026, 7, 8, 8, 0))
-	p := New(config.Scan{Enabled: true}, fr, pub, clk, sf, nil, func(string, int64, int64) ([]feed.Bar, error) {
+	p := New(config.Scan{Enabled: true}, fr, pub, clk, sf, nil, func(context.Context, string, time.Time, time.Time) ([]feed.Bar, error) {
 		return nil, nil
 	})
 	filters := p.Filters()

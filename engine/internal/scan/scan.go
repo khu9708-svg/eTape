@@ -153,9 +153,11 @@ type relativeVolumeCacheKey struct {
 }
 
 type relativeVolumeCacheEntry struct {
-	profile           *relativeVolumeProfile
-	complete          bool
-	lastAttemptMinute int64
+	profile     *relativeVolumeProfile
+	complete    bool
+	terminal    bool
+	retryCount  int
+	nextAttempt time.Time
 }
 
 type relativeVolumeRequest struct {
@@ -168,6 +170,8 @@ const (
 	shortInterestPace      = time.Second
 	maxSafeInteger         = uint64(1<<53 - 1)
 )
+
+var relativeVolumeRetryDelays = [...]time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute, 30 * time.Minute}
 
 type Poller struct {
 	cfg                   config.Scan
@@ -197,20 +201,20 @@ type Poller struct {
 	shortInterestPending  map[string]bool
 	shortInterestQueue    []string
 	shortInterestWake     chan struct{}
-	relativeVolumeReader  func(string, int64, int64) ([]feed.Bar, error)
+	relativeVolumeFetcher func(context.Context, string, time.Time, time.Time) ([]feed.Bar, error)
 	relativeVolumeCache   map[relativeVolumeCacheKey]relativeVolumeCacheEntry
 	relativeVolumePending map[relativeVolumeCacheKey]bool
 	relativeVolumeQueue   []relativeVolumeRequest
 	relativeVolumeWake    chan struct{}
 }
 
-func New(cfg config.Scan, r requester, pub Publisher, clk clock.Clock, feed demandFeed, backfill func(string), relativeVolumeReader func(string, int64, int64) ([]feed.Bar, error), ssr ...shortSellRestrictionResolver) *Poller {
+func New(cfg config.Scan, r requester, pub Publisher, clk clock.Clock, feed demandFeed, backfill func(string), relativeVolumeFetcher func(context.Context, string, time.Time, time.Time) ([]feed.Bar, error), ssr ...shortSellRestrictionResolver) *Poller {
 	filters := Defaults(cfg)
 	var resolver shortSellRestrictionResolver
 	if len(ssr) > 0 {
 		resolver = ssr[0]
 	}
-	return &Poller{cfg: cfg, r: r, pub: pub, clk: clk, feed: feed, backfill: backfill, relativeVolumeReader: relativeVolumeReader, ssr: resolver, pool: NewPool(),
+	return &Poller{cfg: cfg, r: r, pub: pub, clk: clk, feed: feed, backfill: backfill, relativeVolumeFetcher: relativeVolumeFetcher, ssr: resolver, pool: NewPool(),
 		floats: map[string]floatEntry{}, otc: map[string]bool{}, seen: map[string]map[string]bool{}, filters: filters, baseline: true, poke: make(chan struct{}, 1),
 		shortInterest: map[string]shortInterestEntry{}, shortInterestPending: map[string]bool{}, shortInterestWake: make(chan struct{}, 1),
 		relativeVolumeCache: map[relativeVolumeCacheKey]relativeVolumeCacheEntry{}, relativeVolumePending: map[relativeVolumeCacheKey]bool{}, relativeVolumeWake: make(chan struct{}, 1)}
@@ -263,8 +267,10 @@ func (p *Poller) Run(ctx context.Context) error {
 		return nil
 	}
 	go p.runShortInterestWorker(ctx)
-	if p.relativeVolumeReader != nil {
+	if p.relativeVolumeFetcher != nil {
 		go p.runRelativeVolumeWorker(ctx)
+	} else {
+		slog.Debug("scan: REL VOL unavailable", "reason", "no SIP history fetcher")
 	}
 	// Poll on a short base interval; the effective cadence is session-derived.
 	base := p.clk.NewTicker(time.Duration(p.cfg.PremarketMs) * time.Millisecond)
@@ -548,8 +554,6 @@ func relativeVolumeCacheDay(now time.Time) (int64, bool) {
 	return s.Date.UnixMilli(), true
 }
 
-func relativeVolumeMinuteKey(now time.Time) int64 { return now.Unix() / 60 }
-
 func sameRelativeVolumeProfile(a, b *relativeVolumeProfile) bool {
 	if a == nil || b == nil {
 		return a == b
@@ -577,7 +581,7 @@ func (p *Poller) applyRelativeVolumes(now time.Time, items map[string]rankItem) 
 }
 
 func (p *Poller) enqueueRelativeVolumeForPool(now time.Time) {
-	if p.relativeVolumeReader == nil {
+	if p.relativeVolumeFetcher == nil {
 		return
 	}
 	for _, symbol := range p.pool.Symbols() {
@@ -586,7 +590,7 @@ func (p *Poller) enqueueRelativeVolumeForPool(now time.Time) {
 }
 
 func (p *Poller) enqueueRelativeVolume(symbol string, now time.Time) {
-	if p.relativeVolumeReader == nil || symbol == "" {
+	if p.relativeVolumeFetcher == nil || symbol == "" {
 		return
 	}
 	day, ok := relativeVolumeCacheDay(now)
@@ -594,18 +598,17 @@ func (p *Poller) enqueueRelativeVolume(symbol string, now time.Time) {
 		return
 	}
 	key := relativeVolumeCacheKey{symbol: symbol, day: day}
-	minute := relativeVolumeMinuteKey(now)
 	p.mu.Lock()
 	entry := p.relativeVolumeCache[key]
-	if entry.complete || entry.lastAttemptMinute == minute || p.relativeVolumePending[key] {
+	if entry.complete || entry.terminal || p.relativeVolumePending[key] || (!entry.nextAttempt.IsZero() && now.Before(entry.nextAttempt)) {
 		p.mu.Unlock()
 		return
 	}
-	entry.lastAttemptMinute = minute
 	p.relativeVolumeCache[key] = entry
 	p.relativeVolumePending[key] = true
 	p.relativeVolumeQueue = append(p.relativeVolumeQueue, relativeVolumeRequest{key: key, now: now})
 	p.mu.Unlock()
+	slog.Debug("scan: REL VOL history queued", "state", "queued", "symbol", symbol, "day", key.day)
 	select {
 	case p.relativeVolumeWake <- struct{}{}:
 	default:
@@ -624,16 +627,42 @@ func (p *Poller) nextRelativeVolume() (relativeVolumeRequest, bool) {
 }
 
 func (p *Poller) finishRelativeVolume(request relativeVolumeRequest, profile *relativeVolumeProfile, complete bool, err error) {
+	day, validDay := relativeVolumeCacheDay(p.clk.Now())
 	p.mu.Lock()
 	delete(p.relativeVolumePending, request.key)
-	changed := false
-	if err == nil {
-		old := p.relativeVolumeCache[request.key]
-		changed = !sameRelativeVolumeProfile(old.profile, profile) || old.complete != complete
-		p.relativeVolumeCache[request.key] = relativeVolumeCacheEntry{profile: profile, complete: complete, lastAttemptMinute: old.lastAttemptMinute}
+	if !validDay || day != request.key.day {
+		p.mu.Unlock()
+		return
 	}
+	old := p.relativeVolumeCache[request.key]
+	if err != nil {
+		retry := old.retryCount
+		if retry >= len(relativeVolumeRetryDelays) {
+			retry = len(relativeVolumeRetryDelays) - 1
+		}
+		old.retryCount++
+		old.nextAttempt = p.clk.Now().Add(relativeVolumeRetryDelays[retry])
+		p.relativeVolumeCache[request.key] = old
+		nextAttempt := old.nextAttempt
+		attempt := old.retryCount
+		p.mu.Unlock()
+		slog.Warn("scan: REL VOL history request failed", "state", "retrying", "symbol", request.key.symbol, "retryAt", nextAttempt, "attempt", attempt, "err", err)
+		return
+	}
+	changed := false
+	changed = !sameRelativeVolumeProfile(old.profile, profile) || old.complete != complete || old.terminal != !complete
+	p.relativeVolumeCache[request.key] = relativeVolumeCacheEntry{profile: profile, complete: complete, terminal: !complete, retryCount: 0}
 	p.mu.Unlock()
 	if changed {
+		if complete {
+			slog.Debug("scan: REL VOL history ready", "state", "ready", "symbol", request.key.symbol, "day", request.key.day)
+		} else {
+			reason := "incomplete historical date"
+			if profile != nil {
+				reason = "zero baseline"
+			}
+			slog.Warn("scan: REL VOL unavailable", "state", "terminal-unavailable", "symbol", request.key.symbol, "day", request.key.day, "reason", reason)
+		}
 		select {
 		case p.poke <- struct{}{}:
 		default:
@@ -655,18 +684,18 @@ func (p *Poller) runRelativeVolumeWorker(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		fromMs, toMs, ok := relativeVolumeArchiveRange(request.now)
+		from, to, ok := relativeVolumeHistoryRange(request.now)
 		if !ok {
 			p.finishRelativeVolume(request, nil, false, nil)
 			continue
 		}
-		bars, err := p.relativeVolumeReader(request.key.symbol, fromMs, toMs)
+		bars, err := p.relativeVolumeFetcher(ctx, request.key.symbol, from, to)
 		if err != nil {
 			p.finishRelativeVolume(request, nil, false, err)
 			continue
 		}
 		profile, valid := buildRelativeVolumeProfile(request.now, bars)
-		p.finishRelativeVolume(request, profile, valid && profile.complete, nil)
+		p.finishRelativeVolume(request, profile, valid && relativeVolumeProfileHasBaseline(profile), nil)
 	}
 }
 
