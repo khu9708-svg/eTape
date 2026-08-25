@@ -52,12 +52,14 @@ export function openNewsWindow(url: string): Window | null {
     return newsWindow;
   }
 
-  const left = Math.round(window.screenX + (window.outerWidth - NEWS_WINDOW_WIDTH) / 2);
-  const top = Math.round(window.screenY + (window.outerHeight - NEWS_WINDOW_HEIGHT) / 2);
+  const width = Math.min(NEWS_WINDOW_WIDTH, Math.floor((window.screen.availWidth || NEWS_WINDOW_WIDTH) * 0.8));
+  const height = Math.min(NEWS_WINDOW_HEIGHT, Math.floor((window.screen.availHeight || NEWS_WINDOW_HEIGHT) * 0.8));
+  const left = Math.round(window.screenX + (window.outerWidth - width) / 2);
+  const top = Math.round(window.screenY + (window.outerHeight - height) / 2);
   newsWindow = window.open(url, NEWS_WINDOW_TARGET, [
     "popup=yes",
-    `width=${NEWS_WINDOW_WIDTH}`,
-    `height=${NEWS_WINDOW_HEIGHT}`,
+    `width=${width}`,
+    `height=${height}`,
     `left=${left}`,
     `top=${top}`,
     "resizable=yes",
@@ -65,6 +67,12 @@ export function openNewsWindow(url: string): Window | null {
     "noopener",
     "noreferrer",
   ].join(","));
+  try {
+    newsWindow?.resizeTo(width, height);
+    newsWindow?.moveTo(left, top);
+  } catch {
+    // Browsers may reject window controls; the requested popup bounds still apply.
+  }
   newsWindow?.focus();
   return newsWindow;
 }

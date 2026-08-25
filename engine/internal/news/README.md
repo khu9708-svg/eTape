@@ -9,6 +9,10 @@ slot after three consecutive active requests in the same 3.1-second,
 the experimental Yahoo supplement; it reuses that same symbol rotation and
 does not persist articles.
 
+Within its in-memory retention, mirror URLs with the same normalized headline,
+source, symbol, and non-conflicting publication data reconcile into one
+article.
+
 News remains a polling, in-memory feed: headline/source classification provides
 deterministic catalyst scores, but no persistent dedup or price/volume signal.
 Test: `go test ./internal/news`.

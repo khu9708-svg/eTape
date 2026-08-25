@@ -93,14 +93,20 @@ describe("StockInfoPanel", () => {
     expect(screen.getAllByText(/\d{2}:\d{2}:\d{2}/).length).toBeGreaterThan(0);
   });
 
-  it("clicking a headline opens its url in the centered News Reader popup", () => {
+  it("clicking a headline opens an unmaximized centered News Reader popup", () => {
     const { news, linkGroups } = renderPanel();
-    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const popup = { closed: false, focus: vi.fn(), resizeTo: vi.fn(), moveTo: vi.fn(), location: { href: "" } };
+    lastPopup = popup;
+    const open = vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
     Object.defineProperties(window, {
       screenX: { configurable: true, value: 100 },
       screenY: { configurable: true, value: 40 },
       outerWidth: { configurable: true, value: 1400 },
       outerHeight: { configurable: true, value: 1200 },
+    });
+    Object.defineProperties(window.screen, {
+      availWidth: { configurable: true, value: 1000 },
+      availHeight: { configurable: true, value: 700 },
     });
     act(() => {
       news.apply({ kind: "snapshot", topic: "news.item", payload: [
@@ -111,8 +117,10 @@ describe("StockInfoPanel", () => {
     expect(open).toHaveBeenCalledWith(
       "https://x/a",
       "etape-news-reader",
-      "popup=yes,width=1100,height=800,left=250,top=240,resizable=yes,scrollbars=yes,noopener,noreferrer",
+      "popup=yes,width=800,height=560,left=400,top=360,resizable=yes,scrollbars=yes,noopener,noreferrer",
     );
+    expect(popup.resizeTo).toHaveBeenCalledWith(800, 560);
+    expect(popup.moveTo).toHaveBeenCalledWith(400, 360);
   });
 
   it("reuses and focuses the News Reader for another headline", () => {

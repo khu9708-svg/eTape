@@ -112,7 +112,7 @@ func (p *Poller) upsert(items []normalizedArticle, now time.Time) []wsmsg.NewsIt
 }
 
 func semanticFingerprint(item wsmsg.NewsItem) string {
-	return strings.ToLower(strings.TrimSpace(item.Headline)) + "|" + item.Type
+	return strings.ToLower(strings.Join(strings.Fields(item.Headline), " ")) + "|" + item.Type
 }
 
 func sharedSymbol(a, b []string) bool {
@@ -128,7 +128,7 @@ func sharedSymbol(a, b []string) bool {
 	return false
 }
 
-// reconcileID retains the first article ID when optional fields appear later.
+// reconcileID retains the first article ID when optional metadata or mirror URLs arrive later.
 // ponytail: bounded O(n) search over 5,000 retained items; add aliases only if profiling needs them.
 func (p *Poller) reconcileID(item wsmsg.NewsItem, now time.Time) (string, bool) {
 	url := canonicalURL(item.URL)
@@ -142,9 +142,8 @@ func (p *Poller) reconcileID(item wsmsg.NewsItem, now time.Time) (string, bool) 
 	var id string
 	var latest time.Time
 	for candidate, prior := range p.seen {
-		priorURL := canonicalURL(prior.Item.URL)
 		if now.Sub(prior.FirstSeenAt) > reconciliationWindow || semanticFingerprint(prior.Item) != semanticFingerprint(item) || !sharedSymbol(prior.Item.Symbols, item.Symbols) ||
-			(url != "" && priorURL != "" && url != priorURL) || conflictingSource(item.Source, prior.Item.Source) {
+			conflictingSource(item.Source, prior.Item.Source) {
 			continue
 		}
 		if conflictingPublication(prior.Item, item) {

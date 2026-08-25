@@ -195,14 +195,27 @@ func TestArticleReconciliationUpgradesOptionalMetadata(t *testing.T) {
 	}
 }
 
-func TestArticleReconciliationRejectsConflictingMetadata(t *testing.T) {
+func TestArticleReconciliationMergesMirrorURLs(t *testing.T) {
+	p := &Poller{seen: map[string]seenArticle{}}
+	now := time.Now()
+	first := wsmsg.NewsItem{Headline: "Swvl Announces $13 Million Strategic Investment", Source: "GlobeNewswire", Type: "news", Symbols: []string{"US.SWVL"}, URL: "https://wire.example/swvl"}
+	second := first
+	second.Headline = "  Swvl  Announces $13 Million Strategic Investment "
+	second.URL = "https://mirror.example/swvl"
+	first.ID, second.ID = articleID(first, ""), articleID(second, "")
+	got := p.upsert([]normalizedArticle{{item: first}, {item: second}}, now)
+	if len(got) != 1 || len(p.seen) != 1 {
+		t.Fatalf("mirror URLs duplicated article: %+v", got)
+	}
+}
+
+func TestArticleReconciliationKeepsDistinctArticles(t *testing.T) {
 	now := time.Now()
 	for _, tc := range []struct {
 		name                string
 		first, second       wsmsg.NewsItem
 		firstRaw, secondRaw string
 	}{
-		{"urls", wsmsg.NewsItem{Headline: "Filing", Type: "notice", Symbols: []string{"US.AAPL"}, URL: "https://example.com/123"}, wsmsg.NewsItem{Headline: "Filing", Type: "notice", Symbols: []string{"US.AAPL"}, URL: "https://example.com/456"}, "", ""},
 		{"sources", wsmsg.NewsItem{Headline: "Filing", Type: "notice", Symbols: []string{"US.AAPL"}, Source: "SEC"}, wsmsg.NewsItem{Headline: "Filing", Type: "notice", Symbols: []string{"US.AAPL"}, Source: "Newswire"}, "", ""},
 		{"publication", wsmsg.NewsItem{Headline: "Filing", Type: "notice", Symbols: []string{"US.AAPL"}, PublishedAt: "2026-08-06T13:00:00Z", PublishedPrecision: "second"}, wsmsg.NewsItem{Headline: "Filing", Type: "notice", Symbols: []string{"US.AAPL"}, PublishedAt: "2026-08-06T14:00:00Z", PublishedPrecision: "second"}, "2026-08-06 09:00:00", "2026-08-06 10:00:00"},
 	} {
@@ -211,7 +224,7 @@ func TestArticleReconciliationRejectsConflictingMetadata(t *testing.T) {
 			tc.first.ID, tc.second.ID = articleID(tc.first, tc.firstRaw), articleID(tc.second, tc.secondRaw)
 			got := p.upsert([]normalizedArticle{{item: tc.first}, {item: tc.second}}, now)
 			if len(got) != 2 || len(p.seen) != 2 {
-				t.Fatalf("conflicting metadata merged: %+v", got)
+				t.Fatalf("distinct articles merged: %+v", got)
 			}
 		})
 	}

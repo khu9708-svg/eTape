@@ -57,6 +57,14 @@ _Avoid_: Active scanner, selected scanner
 A symbol-bearing panel that displays fundamentals and news for the focused symbol of its selected Link Group. It is not a Scanner Sync target.
 _Avoid_: News panel
 
+**News Article**:
+A source story displayed by a Stock Info Panel. Equivalent wire stories from mirror URLs are shown once.
+_Avoid_: News row, duplicate news
+
+**News Reader**:
+A reusable, resizable browser popup for viewing a News Article. It opens below full-screen size.
+_Avoid_: News window, article window
+
 **Operating Country**:
 The company profile country associated with the issuer's primary operating or headquarters location; it is not the listing market or legal incorporation jurisdiction.
 _Avoid_: Incorporation country, listing country
