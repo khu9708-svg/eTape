@@ -1,12 +1,14 @@
 import { describe, it, expect } from "vitest";
-import type { Book, Order } from "../../wire/contract";
+import type { Book, EstimatedLULD, Order } from "../../wire/contract";
+import type { LadderRow } from "./ladderState";
 import { getPalette } from "../palette";
 import {
   buildLadderSides, buildLadderState, clampLadderOffset, DEFAULT_LADDER_LEVELS,
   depthFraction, entitledForDepth, flashAlpha, maxLadderOffset, normalizeLadderLevels,
-  workingOrderMarks, FLASH_MS, MAX_LADDER_LEVELS, MIN_LADDER_LEVELS, formatEstimatedLULD,
-  luldAccessibleText, visibleLULDMarkers,
+  workingOrderMarks, FLASH_MS, MAX_LADDER_LEVELS, MIN_LADDER_LEVELS,
+  isLULDBoundaryRow, luldAccessibleText, visibleLadderRows,
 } from "./ladderState";
+import { paintLadder } from "./paintLadder";
 
 function book(overrides: Partial<Book> = {}): Book {
   return {
@@ -21,6 +23,19 @@ function book(overrides: Partial<Book> = {}): Book {
       { price: 3.52, size: 100 },
     ],
     ts: "2026-07-06T13:35:00Z",
+    ...overrides,
+  };
+}
+
+function luld(overrides: Partial<EstimatedLULD> = {}): EstimatedLULD {
+  return {
+    lower: 3.475,
+    upper: 3.515,
+    reference: 3.5,
+    tier: "T1",
+    state: "estimated",
+    reason: "",
+    registryAsOf: "2026-07-01",
     ...overrides,
   };
 }
@@ -47,8 +62,10 @@ describe("buildLadderSides", () => {
   it("scales each row's bar to its own size, normalized against the largest level on either side", () => {
     const { asks, bids } = buildLadderSides(book());
     // Largest single level across both sides is bids[1] at 500 — every fraction is /500.
-    expect(bids.map((r) => r.sizeFraction)).toEqual([300 / 500, 1, 200 / 500]);
-    expect(asks.map((r) => r.sizeFraction)).toEqual([400 / 500, 100 / 500]);
+    const realBids = bids.filter((row): row is LadderRow => !isLULDBoundaryRow(row));
+    const realAsks = asks.filter((row): row is LadderRow => !isLULDBoundaryRow(row));
+    expect(realBids.map((r) => r.sizeFraction)).toEqual([300 / 500, 1, 200 / 500]);
+    expect(realAsks.map((r) => r.sizeFraction)).toEqual([400 / 500, 100 / 500]);
   });
   it("caps at the default depth per side", () => {
     const levels = Array.from({ length: 15 }, (_, i) => ({ price: 3.49 - i * 0.01, size: 100 }));
@@ -95,6 +112,17 @@ describe("ladder viewport bounds", () => {
     expect(maxLadderOffset(deepBook, 60, 0)).toBe(59);
     expect(clampLadderOffset(55, 50)).toBe(50);
     expect(clampLadderOffset(-1, 50)).toBe(0);
+  });
+
+  it("reserves a fallback slot without reducing configured depth", () => {
+    const shallow = book({
+      bids: Array.from({ length: 5 }, (_, i) => ({ price: 100 - i, size: 10 })),
+      asks: Array.from({ length: 5 }, (_, i) => ({ price: 101 + i, size: 10 })),
+      estimatedLuld: luld({ lower: 90, upper: 110 }),
+    });
+    const height = 36 + 3 * 22;
+    expect(visibleLadderRows(height, 1)).toBe(2);
+    expect(maxLadderOffset(shallow, 5, height)).toBe(3);
   });
 });
 
@@ -161,36 +189,99 @@ describe("buildLadderState", () => {
     });
     const s = buildLadderState({ ...base, book: deep, levels: 60, rowOffset: 20 });
     expect(s.bids).toHaveLength(60);
-    expect(s.bids[0].sizeFraction).toBe(0.01);
+    expect(s.bids[0]).toMatchObject({ sizeFraction: 0.01 });
     expect(s.rowOffset).toBe(20);
   });
 
-  it("formats the compact Estimated LULD readout and preserves EST when narrow", () => {
-    const luld = { lower: 3.32, upper: 3.68, reference: 3.5, tier: "T1", state: "estimated", reason: "", registryAsOf: "2026-07-01" };
-    expect(formatEstimatedLULD(luld)).toBe("EST LULD 3.32–3.68 · T1 · ESTIMATED · REG 2026-07-01");
-    expect(formatEstimatedLULD(luld, 150)).toBe("EST LULD 3.32–3.68 · ESTIMATED");
-    expect(luldAccessibleText("US.AAPL", luld)).toContain("values 3.32–3.68; tier T1; registry as of 2026-07-01");
+  it("inserts lower and upper boundaries in their independent sorted sequences", () => {
+    const { bids, asks } = buildLadderSides(book({ estimatedLuld: luld() }), 10);
+    expect(bids.map((row) => row.price)).toEqual([3.49, 3.48, 3.475, 3.47]);
+    expect(asks.map((row) => row.price)).toEqual([3.51, 3.515, 3.52]);
+    expect(isLULDBoundaryRow(bids[2])).toBe(true);
+    expect(isLULDBoundaryRow(asks[1])).toBe(true);
   });
 
-  it("keeps unavailable, warming, and frozen states explicit", () => {
-    const base = { lower: 0, upper: 0, reference: 0, tier: "T1", registryAsOf: "2026-07-01" };
-    expect(formatEstimatedLULD({ ...base, state: "unavailable", reason: "outside_rth" })).toBe("EST LULD — · OUTSIDE RTH");
-    expect(formatEstimatedLULD({ ...base, state: "warming", reason: "warming" })).toBe("EST LULD — · WARMING");
-    expect(formatEstimatedLULD({ ...base, state: "frozen", reason: "provider_status" })).toBe("EST LULD — · ESTIMATE FROZEN — PROVIDER STATUS");
+  it("keeps equal-price real rows first and adds a separate boundary row", () => {
+    const { bids, asks } = buildLadderSides(book({ estimatedLuld: luld({ lower: 3.48, upper: 3.51 }) }), 10);
+    expect(bids.map((row) => row.price)).toEqual([3.49, 3.48, 3.48, 3.47]);
+    expect(asks.map((row) => row.price)).toEqual([3.51, 3.51, 3.52]);
+    expect(bids[1]).not.toEqual(bids[2]);
+    expect(asks[0]).not.toEqual(asks[1]);
   });
 
-  it("draws only in-range lower and upper marker positions, including interpolation", () => {
-    const luld = { lower: 99.5, upper: 101.5, reference: 100.5, tier: "T1", state: "estimated", reason: "", registryAsOf: "2026-07-01" };
-    const markers = visibleLULDMarkers({
-      luld,
-      bids: [{ price: 100, size: 1, sizeFraction: 0 }, { price: 99, size: 1, sizeFraction: 0 }],
-      asks: [{ price: 101, size: 1, sizeFraction: 0 }, { price: 102, size: 1, sizeFraction: 0 }],
-      rowOffset: 0,
-      height: 36 + 4 * 22,
+  it("uses bottom fallbacks when a boundary is beyond configured depth", () => {
+    const deep = book({
+      bids: Array.from({ length: 60 }, (_, i) => ({ price: 100 - i, size: 10 })),
+      asks: Array.from({ length: 60 }, (_, i) => ({ price: 101 + i, size: 10 })),
+      estimatedLuld: luld({ lower: 80, upper: 130 }),
     });
-    expect(markers.map((m) => m.label)).toEqual(["L", "U"]);
-    expect(markers[0].y).toBeCloseTo(36 + 22, 6);
-    expect(markers[1].y).toBeCloseTo(36 + 22, 6);
-    expect(visibleLULDMarkers({ luld: { ...luld, lower: 98, upper: 103 }, bids: [{ price: 100, size: 1, sizeFraction: 0 }], asks: [{ price: 101, size: 1, sizeFraction: 0 }], rowOffset: 0, height: 80 })).toEqual([]);
+    const sides = buildLadderSides(deep, 10);
+    expect(sides.bids).toHaveLength(10);
+    expect(sides.asks).toHaveLength(10);
+    expect(sides.bidFallback).toEqual({ kind: "luld", price: 80, frozen: false });
+    expect(sides.askFallback).toEqual({ kind: "luld", price: 130, frozen: false });
+    const maxOffset = maxLadderOffset(deep, 5, 36 + 3 * 22);
+    const scrolled = buildLadderState({
+      symbol: "US.AAPL", book: deep, orders: [], flash: null, last: null, nowMs: 0,
+      width: 300, height: 36 + 3 * 22, palette: getPalette("light"), levels: 5, rowOffset: maxOffset,
+    });
+    expect(scrolled.bids.slice(maxOffset, maxOffset + 2).some((row) => !isLULDBoundaryRow(row) && row.price === 96)).toBe(true);
+  });
+
+  it("keeps in-range rows scrollable and qualifies frozen rows", () => {
+    const state = buildLadderState({
+      symbol: "US.AAPL",
+      book: book({ estimatedLuld: luld({ state: "frozen", reason: "provider_status" }) }),
+      orders: [], flash: null, last: null, nowMs: 0, width: 300, height: 80,
+      palette: getPalette("light"), levels: 10, rowOffset: 1,
+    });
+    expect(state.bids.findIndex(isLULDBoundaryRow)).toBe(2);
+    expect(state.asks.findIndex(isLULDBoundaryRow)).toBe(1);
+    expect(state.bids.slice(state.rowOffset, state.rowOffset + 2).some(isLULDBoundaryRow)).toBe(true);
+    expect(state.bids.find((row) => isLULDBoundaryRow(row))).toMatchObject({ kind: "luld", frozen: true });
+  });
+
+  it("creates no visual rows for warming, unavailable, invalid, unknown, or unpriced frozen values", () => {
+    const cases: EstimatedLULD[] = [
+      luld({ state: "warming", lower: 0, upper: 0 }),
+      luld({ state: "unavailable", lower: 0, upper: 0 }),
+      luld({ state: "unknown", lower: 3.4, upper: 3.6 }),
+      luld({ state: "estimated", lower: Number.NaN }),
+      luld({ state: "frozen", lower: 0, upper: 3.6 }),
+    ];
+    for (const estimatedLuld of cases) {
+      const sides = buildLadderSides(book({ estimatedLuld }), 10);
+      expect(sides.bids.some(isLULDBoundaryRow)).toBe(false);
+      expect(sides.asks.some(isLULDBoundaryRow)).toBe(false);
+      expect(sides.bidFallback).toBeNull();
+      expect(sides.askFallback).toBeNull();
+    }
+  });
+
+  it("keeps LULD state and metadata in accessible text", () => {
+    expect(luldAccessibleText("US.AAPL", luld({ state: "frozen", reason: "provider_status" })))
+      .toContain("state frozen; values 3.48–3.52; tier T1; registry as of 2026-07-01; reason PROVIDER STATUS");
+  });
+
+  it("keeps the BBO strip and omits dashed markers", () => {
+    const estimatedLuld = luld({ lower: 99.5, upper: 100.5 });
+    const testBook = book({
+      bids: [{ price: 99, size: 10 }],
+      asks: [{ price: 101, size: 20 }],
+      estimatedLuld,
+    });
+    const texts: string[] = [];
+    let dashed = 0;
+    const ctx = {
+      clearRect() {}, fillRect() {}, fillText(text: string) { texts.push(text); },
+      beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, setLineDash() { dashed++; },
+    } as unknown as CanvasRenderingContext2D;
+    paintLadder(ctx, buildLadderState({
+      symbol: "US.AAPL", book: testBook, orders: [], flash: null, last: null, nowMs: 0,
+      width: 300, height: 80, palette: getPalette("light"), levels: 10,
+    }));
+    expect(texts).toContain("99.000 × 101.000 · spread 2.000");
+    expect(texts).toContain("LULD");
+    expect(dashed).toBe(0);
   });
 });

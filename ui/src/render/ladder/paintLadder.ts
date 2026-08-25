@@ -1,18 +1,19 @@
 // Pure painter: paint(ctx, state). Classic two-column DOM ladder — bids left
 // (green prices), asks right (red prices), a center divider, depth bars
-// growing outward from the divider. Rows are indexed by book level — y =
-// rowIndex × LADDER_ROW_H, both sides share the same row index (best at top).
+// growing outward from the divider. Logical rows share one scroll offset;
+// beyond-depth LULD fallbacks occupy each side's bottom visible slot.
 import { FONTS } from "../palette";
 import { formatPrice, formatSize } from "../format";
 import {
   flashAlpha,
-  formatEstimatedLULD,
   LADDER_HEADER_H,
   LADDER_ROW_H,
   LADDER_SPREAD_H,
   type LadderPaintState,
-  type LadderRow,
-  visibleLULDMarkers,
+  type LadderEntry,
+  type LULDBoundaryRow,
+  isLULDBoundaryRow,
+  visibleLadderRows,
 } from "./ladderState";
 export { LADDER_ROW_H } from "./ladderState";
 
@@ -42,7 +43,7 @@ export function paintLadder(ctx: CanvasRenderingContext2D, s: LadderPaintState):
   ctx.fillStyle = p.textMuted;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  const strip = s.luld ? formatEstimatedLULD(s.luld, w) : spreadLabel(s);
+  const strip = spreadLabel(s);
   if (strip) ctx.fillText(strip, mid, LADDER_SPREAD_H / 2);
   ctx.strokeStyle = p.border;
   ctx.beginPath();
@@ -74,48 +75,41 @@ export function paintLadder(ctx: CanvasRenderingContext2D, s: LadderPaintState):
   ctx.stroke();
 
   const top = LADDER_SPREAD_H + LADDER_HEADER_H;
-  for (let i = s.rowOffset; i < s.bids.length; i++) {
-    const y = top + (i - s.rowOffset) * LADDER_ROW_H;
-    if (y >= s.height) break;
-    drawSide(ctx, s, s.bids[i], "bid", mid, y);
-  }
-  for (let i = s.rowOffset; i < s.asks.length; i++) {
-    const y = top + (i - s.rowOffset) * LADDER_ROW_H;
-    if (y >= s.height) break;
-    drawSide(ctx, s, s.asks[i], "ask", mid, y);
-  }
-  drawLULDMarkers(ctx, s);
+  const visibleRows = visibleLadderRows(s.height);
+  drawRows(ctx, s, s.bids, s.bidFallback, "bid", mid, top, visibleRows);
+  drawRows(ctx, s, s.asks, s.askFallback, "ask", mid, top, visibleRows);
 }
 
-function drawLULDMarkers(ctx: CanvasRenderingContext2D, s: LadderPaintState): void {
-  const markers = visibleLULDMarkers({ luld: s.luld, asks: s.asks, bids: s.bids, rowOffset: s.rowOffset, height: s.height });
-  if (markers.length === 0) return;
-  ctx.save();
-  ctx.font = `9px ${FONTS.mono}`;
-  ctx.fillStyle = s.palette.warn;
-  ctx.strokeStyle = s.palette.warn;
-  ctx.lineWidth = 1;
-  ctx.setLineDash([4, 3]);
-  for (const marker of markers) {
-    ctx.beginPath();
-    ctx.moveTo(0, marker.y + 0.5);
-    ctx.lineTo(s.width, marker.y + 0.5);
-    ctx.stroke();
-    ctx.textBaseline = "bottom";
-    ctx.textAlign = "left";
-    ctx.fillText(`${marker.label} ${formatPrice(marker.price, s.decimals)}`, PAD, marker.y - 1);
+function drawRows(
+  ctx: CanvasRenderingContext2D,
+  s: LadderPaintState,
+  rows: LadderEntry[],
+  fallback: LULDBoundaryRow | null,
+  side: "bid" | "ask",
+  mid: number,
+  top: number,
+  visibleRows: number,
+): void {
+  if (visibleRows <= 0) return;
+  const logicalRows = Math.max(0, visibleRows - (fallback ? 1 : 0));
+  for (let i = s.rowOffset; i < rows.length && i - s.rowOffset < logicalRows; i++) {
+    drawSide(ctx, s, rows[i], side, mid, top + (i - s.rowOffset) * LADDER_ROW_H);
   }
-  ctx.restore();
+  if (fallback) drawSide(ctx, s, fallback, side, mid, top + (visibleRows - 1) * LADDER_ROW_H);
 }
 
 function drawSide(
   ctx: CanvasRenderingContext2D,
   s: LadderPaintState,
-  row: LadderRow,
+  row: LadderEntry,
   side: "bid" | "ask",
   mid: number,
   y: number,
 ): void {
+  if (isLULDBoundaryRow(row)) {
+    drawLULDBoundary(ctx, s, row, side, mid, y);
+    return;
+  }
   const p = s.palette;
   const w = s.width;
 
@@ -166,10 +160,36 @@ function drawSide(
   }
 }
 
+function drawLULDBoundary(
+  ctx: CanvasRenderingContext2D,
+  s: LadderPaintState,
+  row: LULDBoundaryRow,
+  side: "bid" | "ask",
+  mid: number,
+  y: number,
+): void {
+  const label = row.frozen ? "LULD · FROZEN" : "LULD";
+  const midY = y + LADDER_ROW_H / 2;
+  ctx.font = `11px ${FONTS.mono}`;
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = s.palette.warn;
+  if (side === "bid") {
+    ctx.textAlign = "left";
+    ctx.fillText(label, PAD, midY);
+    ctx.textAlign = "right";
+    ctx.fillText(formatPrice(row.price, s.decimals), mid - PAD, midY);
+  } else {
+    ctx.textAlign = "left";
+    ctx.fillText(formatPrice(row.price, s.decimals), mid + PAD, midY);
+    ctx.textAlign = "right";
+    ctx.fillText(label, s.width - PAD, midY);
+  }
+}
+
 /** "3.49 × 3.51 · spread 0.02" — best bid × best ask with the spread called out. */
 function spreadLabel(s: LadderPaintState): string {
-  const bid = s.bids[0];
-  const ask = s.asks[0];
+  const bid = s.bids.find((row) => !isLULDBoundaryRow(row));
+  const ask = s.asks.find((row) => !isLULDBoundaryRow(row));
   if (!bid || !ask || s.spread === null) return "";
   return `${formatPrice(bid.price, s.decimals)} × ${formatPrice(ask.price, s.decimals)} · spread ${formatPrice(s.spread, s.decimals)}`;
 }

@@ -181,6 +181,41 @@ describe("LadderPanel", () => {
     expect(container.querySelector("canvas")?.getAttribute("aria-label")).toContain("registry as of 2026-07-01");
   });
 
+  it("uses side-specific boundary rows and keeps the BBO spread state", () => {
+    const { stores, surface } = renderLadder();
+    stores.book.apply({
+      kind: "snapshot", topic: "md.book",
+      payload: {
+        symbol: "US.AAPL", bids: [{ price: 99, size: 10 }], asks: [{ price: 101, size: 20 }], ts: "t",
+        estimatedLuld: { lower: 95, upper: 105, reference: 100, tier: "T1", state: "estimated", reason: "", registryAsOf: "2026-07-01" },
+      },
+    });
+    surface().paint();
+    const state = paintedLadders.states.at(-1) as { bids: Array<{ kind?: string; price: number }>; asks: Array<{ kind?: string; price: number }>; spread: number };
+    expect(state.spread).toBe(2);
+    expect(state.bids.at(-1)).toMatchObject({ kind: "luld", price: 95 });
+    expect(state.asks.at(-1)).toMatchObject({ kind: "luld", price: 105 });
+  });
+
+  it("qualifies frozen rows and removes them when the state warms", () => {
+    const { stores, surface, container } = renderLadder();
+    const payload = {
+      symbol: "US.AAPL", bids: [{ price: 99, size: 10 }], asks: [{ price: 101, size: 20 }], ts: "t",
+      estimatedLuld: { lower: 95, upper: 105, reference: 100, tier: "T1", state: "frozen", reason: "provider_status", registryAsOf: "2026-07-01" },
+    };
+    stores.book.apply({ kind: "snapshot", topic: "md.book", payload });
+    surface().paint();
+    const frozen = paintedLadders.states.at(-1) as { bids: Array<{ kind?: string; frozen?: boolean }> };
+    expect(frozen.bids.at(-1)).toMatchObject({ kind: "luld", frozen: true });
+    expect(container.querySelector("canvas")?.getAttribute("aria-label")).toContain("state frozen");
+
+    stores.book.apply({ kind: "snapshot", topic: "md.book", payload: { ...payload, estimatedLuld: { ...payload.estimatedLuld, lower: 0, upper: 0, state: "warming", reason: "warming" } } });
+    surface().paint();
+    const warming = paintedLadders.states.at(-1) as { bids: Array<{ kind?: string }> };
+    expect(warming.bids.some((row) => row.kind === "luld")).toBe(false);
+    expect(container.querySelector("canvas")?.getAttribute("aria-label")).toContain("state warming");
+  });
+
   it("paints the no-entitlement state for non-US symbols without throwing", () => {
     const { surface, linkGroups } = renderLadder();
     linkGroups.focus("green", "HK.00700");

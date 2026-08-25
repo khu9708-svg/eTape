@@ -22,6 +22,18 @@ export interface LadderRow {
   sizeFraction: number;
 }
 
+export interface LULDBoundaryRow {
+  kind: "luld";
+  price: number;
+  frozen: boolean;
+}
+
+export type LadderEntry = LadderRow | LULDBoundaryRow;
+
+export function isLULDBoundaryRow(row: LadderEntry): row is LULDBoundaryRow {
+  return "kind" in row && row.kind === "luld";
+}
+
 export interface OrderMark {
   price: number;
   side: "buy" | "sell";
@@ -42,9 +54,11 @@ export interface LastTrade {
 export interface LadderPaintState {
   symbol: string;
   entitled: boolean;
-  /** Best-first: asks[0] = best ask, bids[0] = best bid. Empty when no book yet. */
-  asks: LadderRow[];
-  bids: LadderRow[];
+  /** Real rows are best-first; virtual LULD rows may sit beside them. */
+  asks: LadderEntry[];
+  bids: LadderEntry[];
+  askFallback: LULDBoundaryRow | null;
+  bidFallback: LULDBoundaryRow | null;
   decimals: number;
   spread: number | null;
   luld: EstimatedLULD | null;
@@ -81,31 +95,72 @@ function accumulate(levels: BookLevel[], count: number): LadderRow[] {
   return levels.slice(0, count).map((l) => ({ price: l.price, size: l.size, sizeFraction: 0 }));
 }
 
+function pricedLuld(luld: EstimatedLULD | undefined): EstimatedLULD | null {
+  if (!luld || (luld.state !== "estimated" && luld.state !== "frozen")) return null;
+  if (!Number.isFinite(luld.lower) || !Number.isFinite(luld.upper) || luld.lower <= 0 || luld.upper <= 0 || luld.lower >= luld.upper) return null;
+  return luld;
+}
+
+function boundaryRow(luld: EstimatedLULD, price: number): LULDBoundaryRow {
+  return { kind: "luld", price, frozen: luld.state === "frozen" };
+}
+
+function projectBoundary(
+  rows: LadderRow[],
+  count: number,
+  luld: EstimatedLULD | null,
+  price: number | undefined,
+  side: "bid" | "ask",
+): { rows: LadderEntry[]; fallback: LULDBoundaryRow | null } {
+  if (!luld || price === undefined) return { rows, fallback: null };
+  const equalIndex = rows.findIndex((row) => row.price === price);
+  if (equalIndex >= 0 && equalIndex < count) {
+    const boundary = boundaryRow(luld, price);
+    return { rows: [...rows.slice(0, equalIndex + 1), boundary, ...rows.slice(equalIndex + 1)], fallback: null };
+  }
+  const insertion = rows.findIndex((row) => side === "bid" ? row.price < price : row.price > price);
+  const index = insertion < 0 ? rows.length : insertion;
+  if (index >= count) return { rows, fallback: boundaryRow(luld, price) };
+  const boundary = boundaryRow(luld, price);
+  return { rows: [...rows.slice(0, index), boundary, ...rows.slice(index)], fallback: null };
+}
+
 /** Book sides (best-first, as delivered) → ladder rows, each bar length proportional to
  *  that row's own size, normalized against the largest single level across BOTH sides. */
-export function buildLadderSides(book: Book | undefined, levels: unknown = DEFAULT_LADDER_LEVELS): { asks: LadderRow[]; bids: LadderRow[] } {
+export function buildLadderSides(book: Book | undefined, levels: unknown = DEFAULT_LADDER_LEVELS): {
+  asks: LadderEntry[];
+  bids: LadderEntry[];
+  askFallback: LULDBoundaryRow | null;
+  bidFallback: LULDBoundaryRow | null;
+} {
   const count = normalizeLadderLevels(levels);
   const asks = accumulate(book?.asks ?? [], count);
   const bids = accumulate(book?.bids ?? [], count);
   const maxSize = Math.max(0, ...asks.map((r) => r.size), ...bids.map((r) => r.size));
   for (const r of asks) r.sizeFraction = depthFraction(r.size, maxSize);
   for (const r of bids) r.sizeFraction = depthFraction(r.size, maxSize);
-  return { asks, bids };
+  const luld = pricedLuld(book?.estimatedLuld);
+  const bid = projectBoundary(bids, count, luld, luld?.lower, "bid");
+  const ask = projectBoundary(asks, count, luld, luld?.upper, "ask");
+  return { asks: ask.rows, bids: bid.rows, askFallback: ask.fallback, bidFallback: bid.fallback };
 }
 
 /** Number of complete depth rows that fit below the fixed spread and column headers. */
-export function visibleLadderRows(height: number): number {
+export function visibleLadderRows(height: number, reservedRows = 0): number {
   const contentHeight = Number.isFinite(height) ? Math.max(0, height - LADDER_CHROME_H) : 0;
-  return Math.floor(contentHeight / LADDER_ROW_H);
+  const rows = Math.floor(contentHeight / LADDER_ROW_H);
+  const reserve = Number.isFinite(reservedRows) ? Math.max(0, Math.floor(reservedRows)) : 0;
+  return Math.max(0, rows - reserve);
 }
 
 /** Maximum logical row offset for the current book, setting, and canvas height. */
 export function maxLadderOffset(book: Book | undefined, levels: unknown, height: number): number {
-  const availableDepth = Math.min(
-    normalizeLadderLevels(levels),
-    Math.max(book?.bids.length ?? 0, book?.asks.length ?? 0),
-  );
-  return Math.max(0, availableDepth - Math.max(1, visibleLadderRows(height)));
+  const sides = buildLadderSides(book, levels);
+  const sideOffset = (rows: LadderEntry[], fallback: LULDBoundaryRow | null): number => {
+    const visible = Math.max(1, visibleLadderRows(height, fallback ? 1 : 0));
+    return Math.max(0, rows.length - visible);
+  };
+  return Math.max(sideOffset(sides.bids, sides.bidFallback), sideOffset(sides.asks, sides.askFallback));
 }
 
 export function clampLadderOffset(offset: number, maxOffset: number): number {
@@ -156,78 +211,12 @@ function luldValues(luld: EstimatedLULD): string {
   return `${luld.lower.toFixed(2)}–${luld.upper.toFixed(2)}`;
 }
 
-/** Compact fixed-strip copy. The explicit EST qualifier survives narrow widths. */
-export function formatEstimatedLULD(luld: EstimatedLULD | null | undefined, width = Number.POSITIVE_INFINITY): string {
-  if (!luld) return "";
-  if (luld.state === "warming") return "EST LULD — · WARMING";
-  if (luld.state === "estimated") {
-    const values = luldValues(luld);
-    if (width < 160) return `EST LULD ${values} · ESTIMATED`;
-    if (width < 240) return `EST LULD ${values} · ${luld.tier} · ESTIMATED`;
-    return `EST LULD ${values} · ${luld.tier} · ESTIMATED · REG ${luld.registryAsOf}`;
-  }
-  if (luld.state === "frozen" && Number.isFinite(luld.lower) && Number.isFinite(luld.upper) && luld.lower > 0 && luld.upper > 0) {
-    const values = luldValues(luld);
-    const warning = luld.reason === "provider_status" ? "ESTIMATE FROZEN — PROVIDER STATUS" : `ESTIMATE FROZEN — ${luldReason(luld.reason)}`;
-    if (width < 240) return `EST LULD ${values} · ${warning}`;
-    return `EST LULD ${values} · ${luld.tier} · ${warning} · REG ${luld.registryAsOf}`;
-  }
-  if (luld.state === "frozen") return `EST LULD — · ESTIMATE FROZEN — ${luldReason(luld.reason)}`;
-  return `EST LULD — · ${luldReason(luld.reason)}`;
-}
-
 export function luldAccessibleText(symbol: string, luld: EstimatedLULD | null | undefined): string {
   if (!luld) return `DOM ladder ${symbol}`;
   const values = luld.state === "estimated" || luld.state === "frozen" ? `; values ${luldValues(luld)}` : "";
   const registry = luld.registryAsOf ? `; registry as of ${luld.registryAsOf}` : "";
   const reason = luld.reason ? `; reason ${luldReason(luld.reason)}` : "";
   return `DOM ladder ${symbol}; Estimated LULD state ${luld.state}${values}; tier ${luld.tier}${registry}${reason}`;
-}
-
-export interface LULDMarker {
-  label: "L" | "U";
-  price: number;
-  y: number;
-}
-
-/** Returns only in-range lower/upper markers for the currently visible rows. */
-export function visibleLULDMarkers(args: {
-  luld: EstimatedLULD | null | undefined;
-  asks: LadderRow[];
-  bids: LadderRow[];
-  rowOffset: number;
-  height: number;
-}): LULDMarker[] {
-  const luld = args.luld;
-  if (!luld || (luld.state !== "estimated" && luld.state !== "frozen")) return [];
-  if (!Number.isFinite(luld.lower) || !Number.isFinite(luld.upper) || luld.lower <= 0 || luld.upper <= 0) return [];
-  const rows = [
-    ...args.bids.map((row, index) => ({ price: row.price, index })),
-    ...args.asks.map((row, index) => ({ price: row.price, index })),
-  ]
-    .filter((row) => row.index >= args.rowOffset && row.index < args.rowOffset + Math.max(1, visibleLadderRows(args.height)))
-    .map((row) => ({ price: row.price, y: LADDER_CHROME_H + (row.index - args.rowOffset) * LADDER_ROW_H + LADDER_ROW_H / 2 }));
-  if (rows.length === 0) return [];
-  rows.sort((a, b) => a.price - b.price);
-  const yFor = (price: number): number | null => {
-    if (price < rows[0].price || price > rows[rows.length - 1].price) return null;
-    for (const row of rows) if (row.price === price) return row.y;
-    for (let i = 1; i < rows.length; i++) {
-      const low = rows[i - 1];
-      const high = rows[i];
-      if (price <= high.price && high.price !== low.price) {
-        return low.y + ((price - low.price) / (high.price - low.price)) * (high.y - low.y);
-      }
-    }
-    return null;
-  };
-  return ([
-    ["L", luld.lower],
-    ["U", luld.upper],
-  ] as const).flatMap(([label, price]) => {
-    const y = yFor(price);
-    return y === null ? [] : [{ label, price, y }];
-  });
 }
 
 export function buildLadderState(args: {
@@ -244,13 +233,17 @@ export function buildLadderState(args: {
   rowOffset?: number;
 }): LadderPaintState {
   const entitled = entitledForDepth(args.symbol);
-  const { asks, bids } = buildLadderSides(entitled ? args.book : undefined, args.levels);
-  const spread = asks.length > 0 && bids.length > 0 ? asks[0].price - bids[0].price : null;
+  const sides = buildLadderSides(entitled ? args.book : undefined, args.levels);
+  const spread = entitled && args.book?.asks[0] && args.book?.bids[0]
+    ? args.book.asks[0].price - args.book.bids[0].price
+    : null;
   return {
     symbol: args.symbol,
     entitled,
-    asks,
-    bids,
+    asks: sides.asks,
+    bids: sides.bids,
+    askFallback: sides.askFallback,
+    bidFallback: sides.bidFallback,
     decimals: QUOTE_DECIMALS,
     spread,
     luld: args.book?.estimatedLuld ?? null,
