@@ -19,6 +19,7 @@ const SESSION_ANNOUNCEMENT: Partial<Record<Session, string>> = {
 };
 const SESSION_VOICE_LOCK = "etape.session-voice";
 const SESSION_VOICE_STORAGE_KEY = "etape.sessionVoice";
+const FEMALE_VOICE_HINTS = /female|woman|girl|samantha|zira|susan|karen|moira|victoria|ava|allison|aria|jenny|libby|hazel|joanna|serena|siri/i;
 
 function announceSession(session: Session, tsMs: number): void {
   const text = SESSION_ANNOUNCEMENT[session];
@@ -29,8 +30,8 @@ function announceSession(session: Session, tsMs: number): void {
     const utterance = new SpeechSynthesisUtterance(text);
     const voices = synth.getVoices().filter((voice) => voice.lang === "en-US");
     utterance.voice = voices.find((voice) => voice.name === "Google US English Female")
+      ?? voices.find((voice) => FEMALE_VOICE_HINTS.test(voice.name))
       ?? voices.find((voice) => voice.name === "Google US English")
-      ?? voices.find((voice) => /female|zira/i.test(voice.name))
       ?? null;
     utterance.lang = "en-US";
     utterance.rate = 0.90;

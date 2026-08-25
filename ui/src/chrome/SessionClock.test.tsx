@@ -72,6 +72,30 @@ describe("SessionClock", () => {
     vi.unstubAllGlobals();
   });
 
+  it("does not choose the generic Google voice ahead of an available female voice", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-09T07:59:59Z"));
+    const speak = vi.fn();
+    const male = { name: "Google US English", lang: "en-US" } as SpeechSynthesisVoice;
+    const female = { name: "Microsoft Samantha - English (United States)", lang: "en-US" } as SpeechSynthesisVoice;
+    class FakeUtterance {
+      voice: SpeechSynthesisVoice | null = null;
+      lang = "";
+      rate = 1;
+      pitch = 1;
+      constructor(readonly text: string) {}
+    }
+    vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
+    vi.stubGlobal("speechSynthesis", { getVoices: () => [male, female], speak });
+
+    render(<ThemeProvider><SessionClock /></ThemeProvider>);
+    act(() => { vi.advanceTimersByTime(1000); });
+
+    expect(speak).toHaveBeenCalledWith(expect.objectContaining({ voice: female }));
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
   it("announces one shared transition once across workspaces", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-09T07:59:59Z"));
