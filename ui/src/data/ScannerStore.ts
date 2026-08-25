@@ -41,7 +41,7 @@ export class ScannerStore extends ReactStore<ScannerState> {
       const isUnseen = unseen.has(row.symbol);
       return {
         ...row,
-        volumeRatio: row.volumeRatio ?? null,
+        relativeVolume: row.relativeVolume ?? null,
         shortInterest: row.shortInterest ?? null,
         shortInterestAsOf: row.shortInterestAsOf ?? null,
         isUnseen,

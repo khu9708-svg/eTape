@@ -36,7 +36,7 @@ export const scannerSortAccessors: Record<string, (row: ScannerRowView) => numbe
   last: (row) => row.last,
   float: (row) => row.floatShares,
   vol: (row) => row.volume,
-  volRatio: (row) => row.volumeRatio ?? null,
+  relVol: (row) => row.relativeVolume ?? null,
   shortInterest: (row) => row.shortInterest ?? null,
 };
 
@@ -48,8 +48,9 @@ export function scannerModeSort(mode: ScannerFilters["mode"]): SortState {
 
 export function readScannerSort(settings: Record<string, unknown>): SortState {
   const raw = settings.sort as { col?: unknown; dir?: unknown } | undefined;
-  return raw && typeof raw.col === "string" && (raw.dir === "asc" || raw.dir === "desc")
-    ? { col: raw.col, dir: raw.dir }
+  const col = raw?.col === "volRatio" ? "relVol" : raw?.col;
+  return typeof col === "string" && (raw?.dir === "asc" || raw?.dir === "desc")
+    ? { col, dir: raw.dir }
     : DEFAULT_SCANNER_SORT;
 }
 

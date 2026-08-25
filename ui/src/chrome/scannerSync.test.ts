@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planScannerSync, rankScannerRows, scannerSyncStatusText } from "./scannerSync";
+import { planScannerSync, rankScannerRows, readScannerSort, scannerSyncStatusText } from "./scannerSync";
 import type { ScannerRowView } from "../data/ScannerStore";
 
 const slots = (symbols: Array<string | undefined>) => symbols.map((symbol, i) => ({ id: `slot-${i}`, symbol }));
@@ -69,14 +69,14 @@ describe("scannerSyncStatusText", () => {
 });
 
 describe("rankScannerRows", () => {
-	const row = (symbol: string, volumeRatio: number | null, shortInterest: number | null = null): ScannerRowView => ({
-		symbol, shortSellRestricted: false, changePct: 1, last: 1, floatShares: null, volume: 1, volumeRatio,
+	const row = (symbol: string, relativeVolume: number | null, shortInterest: number | null = null): ScannerRowView => ({
+		symbol, shortSellRestricted: false, changePct: 1, last: 1, floatShares: null, volume: 1, relativeVolume,
 		shortInterest, shortInterestAsOf: shortInterest === null ? null : "2026-07-31",
 		isUnseen: false, isNewHit: false, muted: false,
 	});
 
-	it("ranks higher finite Volume Ratios before unavailable rows", () => {
-		expect(rankScannerRows([row("UNKNOWN", null), row("LOW", 1.2), row("HIGH", 8.4)], { col: "volRatio", dir: "desc" }).map((r) => r.symbol))
+	it("ranks higher finite REL VOL values before unavailable rows", () => {
+		expect(rankScannerRows([row("UNKNOWN", null), row("LOW", 1.2), row("HIGH", 8.4)], { col: "relVol", dir: "desc" }).map((r) => r.symbol))
 			.toEqual(["HIGH", "LOW", "UNKNOWN"]);
 	});
 
@@ -86,5 +86,12 @@ describe("rankScannerRows", () => {
 			.toEqual(["HIGH", "LOW", "UNKNOWN"]);
 		expect(rankScannerRows(rows, { col: "shortInterest", dir: "asc" }).map((r) => r.symbol))
 			.toEqual(["LOW", "HIGH", "UNKNOWN"]);
+	});
+});
+
+describe("readScannerSort", () => {
+	it("migrates legacy volRatio sorting while preserving direction", () => {
+		expect(readScannerSort({ sort: { col: "volRatio", dir: "asc" } })).toEqual({ col: "relVol", dir: "asc" });
+		expect(readScannerSort({ sort: { col: "volRatio", dir: "desc" } })).toEqual({ col: "relVol", dir: "desc" });
 	});
 });

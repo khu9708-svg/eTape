@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -1088,18 +1089,83 @@ type demandFeeder interface {
 	Release(id string)
 }
 
+type scannerFilterConfig interface {
+	GetConfig(string) (string, bool, error)
+	SetConfig(string, string)
+}
+
+type legacyScannerFilters struct {
+	Mode           string   `json:"mode"`
+	MinChangePct   float64  `json:"minChangePct"`
+	MaxFloatShares *float64 `json:"maxFloatShares"`
+	MinVolume      float64  `json:"minVolume"`
+	MinVolumeRatio float64  `json:"minVolumeRatio"`
+	FloatUnit      string   `json:"floatUnit"`
+	VolumeUnit     string   `json:"volumeUnit"`
+}
+
+func decodeScannerFiltersV2(raw string) (wsmsg.ScannerFilters, bool) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(raw), &fields) != nil {
+		return wsmsg.ScannerFilters{}, false
+	}
+	if _, ok := fields["minRelativeVolume"]; !ok {
+		return wsmsg.ScannerFilters{}, false
+	}
+	var filters wsmsg.ScannerFilters
+	if json.Unmarshal([]byte(raw), &filters) != nil || scan.ValidateFilters(filters) != nil {
+		return wsmsg.ScannerFilters{}, false
+	}
+	return filters, true
+}
+
+func decodeLegacyScannerFilters(raw string) (wsmsg.ScannerFilters, bool) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(raw), &fields) != nil {
+		return wsmsg.ScannerFilters{}, false
+	}
+	if _, ok := fields["minVolumeRatio"]; !ok {
+		return wsmsg.ScannerFilters{}, false
+	}
+	var legacy legacyScannerFilters
+	if json.Unmarshal([]byte(raw), &legacy) != nil {
+		return wsmsg.ScannerFilters{}, false
+	}
+	filters := wsmsg.ScannerFilters{
+		Mode: legacy.Mode, MinChangePct: legacy.MinChangePct, MaxFloatShares: legacy.MaxFloatShares,
+		MinVolume: legacy.MinVolume, MinRelativeVolume: 0, FloatUnit: legacy.FloatUnit, VolumeUnit: legacy.VolumeUnit,
+	}
+	if scan.ValidateFilters(filters) != nil || math.IsNaN(legacy.MinVolumeRatio) || math.IsInf(legacy.MinVolumeRatio, 0) || legacy.MinVolumeRatio < 0 {
+		return wsmsg.ScannerFilters{}, false
+	}
+	return filters, true
+}
+
+func restoreScannerFilters(cfg scannerFilterConfig, defaults wsmsg.ScannerFilters) wsmsg.ScannerFilters {
+	if raw, ok, err := cfg.GetConfig("scanner.filters.v2"); err == nil && ok {
+		if filters, valid := decodeScannerFiltersV2(raw); valid {
+			return filters
+		}
+		return defaults
+	}
+	if raw, ok, err := cfg.GetConfig("scanner.filters.v1"); err == nil && ok {
+		if filters, valid := decodeLegacyScannerFilters(raw); valid {
+			if encoded, marshalErr := json.Marshal(filters); marshalErr == nil {
+				cfg.SetConfig("scanner.filters.v2", string(encoded))
+			}
+			return filters
+		}
+	}
+	return defaults
+}
+
 // startQuota gates the quota poller: false in -demo, since the synthetic
 // requester answers Qot_GetSubInfo with the generic "no data" response
 // rather than a real subscription budget, so tracking it would be noise.
 func startPollers(ctx context.Context, cfg config.Config, r pollerRequester, demand demandFeeder, hub *uihub.Hub, clk clock.Clock, st *store.Store, wl *watchlist.List, hasTZ bool, mmProbe rttProber, accountHealth health.AccountHealthSource, assetReader stockInfoAssetReader, backfillOne func(string), startQuota bool, scanWG *sync.WaitGroup) {
 	ssrResolver := ssr.New(st)
-	scanPoller := scan.New(cfg.Scan, r, hub, clk, demand, backfillOne, ssrResolver)
-	if raw, ok, err := st.GetConfig("scanner.filters.v1"); err == nil && ok {
-		var saved wsmsg.ScannerFilters
-		if json.Unmarshal([]byte(raw), &saved) == nil && scan.ValidateFilters(saved) == nil {
-			_ = scanPoller.SetFilters(saved)
-		}
-	}
+	scanPoller := scan.New(cfg.Scan, r, hub, clk, demand, backfillOne, st.ReadBars1m, ssrResolver)
+	_ = scanPoller.SetFilters(restoreScannerFilters(st, scan.Defaults(cfg.Scan)))
 	hub.SetScanner(scanPoller)
 	newsPlan := func() news.SymbolPlan { return newsSymbolPlan(scanPoller.PoolSymbols(), hub.ActiveDemandSymbols()) }
 	symbols := func() []string { return newsPlan().All() }

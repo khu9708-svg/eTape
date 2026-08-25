@@ -66,12 +66,56 @@ func snapshotObservationTime(basic *snappb.SnapshotBasicData) time.Time {
 	return time.Unix(int64(ts), 0)
 }
 
-func validVolumeRatio(v *float64) *float64 {
-	if v == nil || math.IsNaN(*v) || math.IsInf(*v, 0) || *v < 0 {
-		return nil
+func nonNegativeSnapshotVolume(value *int64) (int64, bool) {
+	if value == nil || *value < 0 {
+		return 0, false
 	}
-	value := *v
-	return &value
+	return *value, true
+}
+
+func snapshotCumulativeVolume(basic *snappb.SnapshotBasicData, phase session.Phase) (int64, bool) {
+	if basic == nil {
+		return 0, false
+	}
+	pre := basic.PreMarket
+	preVolume, ok := func() (int64, bool) {
+		if pre == nil {
+			return 0, false
+		}
+		return nonNegativeSnapshotVolume(pre.Volume)
+	}()
+	if !ok {
+		return 0, false
+	}
+	switch phase {
+	case session.PreMarket:
+		return preVolume, true
+	case session.RTH:
+		regular, ok := nonNegativeSnapshotVolume(basic.Volume)
+		if !ok {
+			return 0, false
+		}
+		return addRelativeVolume(preVolume, regular)
+	case session.PostMarket:
+		regular, regularOK := nonNegativeSnapshotVolume(basic.Volume)
+		after := basic.AfterMarket
+		afterVolume, afterOK := func() (int64, bool) {
+			if after == nil {
+				return 0, false
+			}
+			return nonNegativeSnapshotVolume(after.Volume)
+		}()
+		if !regularOK || !afterOK {
+			return 0, false
+		}
+		partial, ok := addRelativeVolume(preVolume, regular)
+		if !ok {
+			return 0, false
+		}
+		return addRelativeVolume(partial, afterVolume)
+	default:
+		return 0, false
+	}
 }
 
 // rankItem is the poller-internal normalized form of one rank row (decoupled
@@ -81,8 +125,11 @@ type rankItem struct {
 	ChangePct           float64
 	Last                float64
 	Volume              int64
-	VolumeRatio         *float64
+	RelativeVolume      *float64
 	ShortSellRestricted bool
+	cumulativeVolume    *int64
+	cumulativePhase     session.Phase
+	cumulativeDay       int64
 }
 
 // floatEntry is a resolved float-cache entry. bad = definitively unresolvable
@@ -98,6 +145,22 @@ type shortInterestEntry struct {
 	asOf      string
 	available bool
 	fetchedAt time.Time
+}
+
+type relativeVolumeCacheKey struct {
+	symbol string
+	day    int64
+}
+
+type relativeVolumeCacheEntry struct {
+	profile           *relativeVolumeProfile
+	complete          bool
+	lastAttemptMinute int64
+}
+
+type relativeVolumeRequest struct {
+	key relativeVolumeCacheKey
+	now time.Time
 }
 
 const (
@@ -134,17 +197,23 @@ type Poller struct {
 	shortInterestPending  map[string]bool
 	shortInterestQueue    []string
 	shortInterestWake     chan struct{}
+	relativeVolumeReader  func(string, int64, int64) ([]feed.Bar, error)
+	relativeVolumeCache   map[relativeVolumeCacheKey]relativeVolumeCacheEntry
+	relativeVolumePending map[relativeVolumeCacheKey]bool
+	relativeVolumeQueue   []relativeVolumeRequest
+	relativeVolumeWake    chan struct{}
 }
 
-func New(cfg config.Scan, r requester, pub Publisher, clk clock.Clock, feed demandFeed, backfill func(string), ssr ...shortSellRestrictionResolver) *Poller {
+func New(cfg config.Scan, r requester, pub Publisher, clk clock.Clock, feed demandFeed, backfill func(string), relativeVolumeReader func(string, int64, int64) ([]feed.Bar, error), ssr ...shortSellRestrictionResolver) *Poller {
 	filters := Defaults(cfg)
 	var resolver shortSellRestrictionResolver
 	if len(ssr) > 0 {
 		resolver = ssr[0]
 	}
-	return &Poller{cfg: cfg, r: r, pub: pub, clk: clk, feed: feed, backfill: backfill, ssr: resolver, pool: NewPool(),
+	return &Poller{cfg: cfg, r: r, pub: pub, clk: clk, feed: feed, backfill: backfill, relativeVolumeReader: relativeVolumeReader, ssr: resolver, pool: NewPool(),
 		floats: map[string]floatEntry{}, otc: map[string]bool{}, seen: map[string]map[string]bool{}, filters: filters, baseline: true, poke: make(chan struct{}, 1),
-		shortInterest: map[string]shortInterestEntry{}, shortInterestPending: map[string]bool{}, shortInterestWake: make(chan struct{}, 1)}
+		shortInterest: map[string]shortInterestEntry{}, shortInterestPending: map[string]bool{}, shortInterestWake: make(chan struct{}, 1),
+		relativeVolumeCache: map[relativeVolumeCacheKey]relativeVolumeCacheEntry{}, relativeVolumePending: map[relativeVolumeCacheKey]bool{}, relativeVolumeWake: make(chan struct{}, 1)}
 }
 
 func Defaults(cfg config.Scan) wsmsg.ScannerFilters {
@@ -153,7 +222,7 @@ func Defaults(cfg config.Scan) wsmsg.ScannerFilters {
 		v := cfg.MaxFloatShares
 		cap = &v
 	}
-	return wsmsg.ScannerFilters{Mode: "gainers", MinChangePct: cfg.MinChangePct, MaxFloatShares: cap, MinVolume: float64(cfg.MinVolume), MinVolumeRatio: 0, FloatUnit: "M", VolumeUnit: "K"}
+	return wsmsg.ScannerFilters{Mode: "gainers", MinChangePct: cfg.MinChangePct, MaxFloatShares: cap, MinVolume: float64(cfg.MinVolume), MinRelativeVolume: 0, FloatUnit: "M", VolumeUnit: "K"}
 }
 
 func ValidateFilters(f wsmsg.ScannerFilters) error {
@@ -163,7 +232,7 @@ func ValidateFilters(f wsmsg.ScannerFilters) error {
 	if (f.FloatUnit != "K" && f.FloatUnit != "M") || (f.VolumeUnit != "K" && f.VolumeUnit != "M") {
 		return fmt.Errorf("invalid unit")
 	}
-	if math.IsNaN(f.MinChangePct) || math.IsInf(f.MinChangePct, 0) || f.MinChangePct < 0 || math.IsNaN(f.MinVolume) || math.IsInf(f.MinVolume, 0) || f.MinVolume < 0 || math.IsNaN(f.MinVolumeRatio) || math.IsInf(f.MinVolumeRatio, 0) || f.MinVolumeRatio < 0 {
+	if math.IsNaN(f.MinChangePct) || math.IsInf(f.MinChangePct, 0) || f.MinChangePct < 0 || math.IsNaN(f.MinVolume) || math.IsInf(f.MinVolume, 0) || f.MinVolume < 0 || math.IsNaN(f.MinRelativeVolume) || math.IsInf(f.MinRelativeVolume, 0) || f.MinRelativeVolume < 0 {
 		return fmt.Errorf("invalid numeric filter")
 	}
 	if f.MaxFloatShares != nil && (math.IsNaN(*f.MaxFloatShares) || math.IsInf(*f.MaxFloatShares, 0) || *f.MaxFloatShares < 0) {
@@ -194,6 +263,9 @@ func (p *Poller) Run(ctx context.Context) error {
 		return nil
 	}
 	go p.runShortInterestWorker(ctx)
+	if p.relativeVolumeReader != nil {
+		go p.runRelativeVolumeWorker(ctx)
+	}
 	// Poll on a short base interval; the effective cadence is session-derived.
 	base := p.clk.NewTicker(time.Duration(p.cfg.PremarketMs) * time.Millisecond)
 	defer base.Stop()
@@ -281,16 +353,13 @@ func (p *Poller) pollOnce(ctx context.Context, now time.Time) {
 		all[sym] = it
 	}
 	for _, it := range items {
-		if retained, ok := all[it.Symbol]; ok {
-			if phase == session.RTH && it.VolumeRatio != nil {
-				retained.VolumeRatio = it.VolumeRatio
-				all[it.Symbol] = retained
-			}
+		if _, ok := all[it.Symbol]; ok {
 			continue
 		}
 		all[it.Symbol] = it
 	}
 	p.refreshSnapshots(ctx, phase, all)
+	p.applyRelativeVolumes(now, all)
 	for _, it := range items {
 		it = all[it.Symbol]
 		if len(rankRowsFiltered([]rankItem{it}, p.floats, filters)) != 0 {
@@ -323,7 +392,14 @@ func (p *Poller) pollOnce(ctx context.Context, now time.Time) {
 		p.premarketBootstrapped = true
 		p.mu.Unlock()
 	}
-	p.updatePool(now, rows)
+	poolRows := rows
+	if filters.MinRelativeVolume > 0 {
+		poolFilters := filters
+		poolFilters.MinRelativeVolume = 0
+		poolRows = rankRowsFiltered(items, p.floats, poolFilters)
+	}
+	p.updatePool(now, poolRows)
+	p.enqueueRelativeVolumeForPool(now)
 	sess := sessionKey(phase)
 	p.mu.Lock()
 	baseline := p.baseline
@@ -341,7 +417,7 @@ func (p *Poller) pollOnce(ctx context.Context, now time.Time) {
 }
 
 func sameFilters(a, b wsmsg.ScannerFilters) bool {
-	if a.Mode != b.Mode || a.MinChangePct != b.MinChangePct || a.MinVolume != b.MinVolume || a.MinVolumeRatio != b.MinVolumeRatio || a.FloatUnit != b.FloatUnit || a.VolumeUnit != b.VolumeUnit {
+	if a.Mode != b.Mode || a.MinChangePct != b.MinChangePct || a.MinVolume != b.MinVolume || a.MinRelativeVolume != b.MinRelativeVolume || a.FloatUnit != b.FloatUnit || a.VolumeUnit != b.VolumeUnit {
 		return false
 	}
 	if a.MaxFloatShares == nil || b.MaxFloatShares == nil {
@@ -437,7 +513,7 @@ func rankRowsFiltered(items []rankItem, floats map[string]floatEntry, f wsmsg.Sc
 		if f.MinVolume > 0 && float64(it.Volume) < f.MinVolume {
 			continue
 		}
-		if f.MinVolumeRatio > 0 && (it.VolumeRatio == nil || *it.VolumeRatio < f.MinVolumeRatio) {
+		if f.MinRelativeVolume > 0 && (it.RelativeVolume == nil || *it.RelativeVolume < f.MinRelativeVolume) {
 			continue
 		}
 		var floatPtr *float64
@@ -457,10 +533,141 @@ func rankRowsFiltered(items []rankItem, floats map[string]floatEntry, f wsmsg.Sc
 		cp, lp := it.ChangePct, it.Last
 		out = append(out, wsmsg.ScannerRow{
 			Symbol: it.Symbol, ShortSellRestricted: it.ShortSellRestricted,
-			ChangePct: &cp, Last: &lp, FloatShares: floatPtr, Volume: it.Volume, VolumeRatio: it.VolumeRatio,
+			ChangePct: &cp, Last: &lp, FloatShares: floatPtr, Volume: it.Volume, RelativeVolume: it.RelativeVolume,
 		})
 	}
 	return out
+}
+
+func relativeVolumeCacheDay(now time.Time) (int64, bool) {
+	et := now.In(session.Loc())
+	s := session.Schedule(et)
+	if !s.TradingDay || !relativeVolumePhase(session.PhaseAt(et)) {
+		return 0, false
+	}
+	return s.Date.UnixMilli(), true
+}
+
+func relativeVolumeMinuteKey(now time.Time) int64 { return now.Unix() / 60 }
+
+func sameRelativeVolumeProfile(a, b *relativeVolumeProfile) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.day != b.day || a.complete != b.complete || a.counts != b.counts {
+		return false
+	}
+	return a.means == b.means
+}
+
+func (p *Poller) applyRelativeVolumes(now time.Time, items map[string]rankItem) {
+	phase := session.PhaseAt(now)
+	day, validDay := relativeVolumeCacheDay(now)
+	for symbol, it := range items {
+		it.RelativeVolume = nil
+		if validDay && it.cumulativeVolume != nil && it.cumulativePhase == phase && it.cumulativeDay == day {
+			key := relativeVolumeCacheKey{symbol: symbol, day: day}
+			p.mu.RLock()
+			entry := p.relativeVolumeCache[key]
+			p.mu.RUnlock()
+			it.RelativeVolume = relativeVolumeAt(entry.profile, now, *it.cumulativeVolume)
+		}
+		items[symbol] = it
+	}
+}
+
+func (p *Poller) enqueueRelativeVolumeForPool(now time.Time) {
+	if p.relativeVolumeReader == nil {
+		return
+	}
+	for _, symbol := range p.pool.Symbols() {
+		p.enqueueRelativeVolume(symbol, now)
+	}
+}
+
+func (p *Poller) enqueueRelativeVolume(symbol string, now time.Time) {
+	if p.relativeVolumeReader == nil || symbol == "" {
+		return
+	}
+	day, ok := relativeVolumeCacheDay(now)
+	if !ok {
+		return
+	}
+	key := relativeVolumeCacheKey{symbol: symbol, day: day}
+	minute := relativeVolumeMinuteKey(now)
+	p.mu.Lock()
+	entry := p.relativeVolumeCache[key]
+	if entry.complete || entry.lastAttemptMinute == minute || p.relativeVolumePending[key] {
+		p.mu.Unlock()
+		return
+	}
+	entry.lastAttemptMinute = minute
+	p.relativeVolumeCache[key] = entry
+	p.relativeVolumePending[key] = true
+	p.relativeVolumeQueue = append(p.relativeVolumeQueue, relativeVolumeRequest{key: key, now: now})
+	p.mu.Unlock()
+	select {
+	case p.relativeVolumeWake <- struct{}{}:
+	default:
+	}
+}
+
+func (p *Poller) nextRelativeVolume() (relativeVolumeRequest, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.relativeVolumeQueue) == 0 {
+		return relativeVolumeRequest{}, false
+	}
+	request := p.relativeVolumeQueue[0]
+	p.relativeVolumeQueue = p.relativeVolumeQueue[1:]
+	return request, true
+}
+
+func (p *Poller) finishRelativeVolume(request relativeVolumeRequest, profile *relativeVolumeProfile, complete bool, err error) {
+	p.mu.Lock()
+	delete(p.relativeVolumePending, request.key)
+	changed := false
+	if err == nil {
+		old := p.relativeVolumeCache[request.key]
+		changed = !sameRelativeVolumeProfile(old.profile, profile) || old.complete != complete
+		p.relativeVolumeCache[request.key] = relativeVolumeCacheEntry{profile: profile, complete: complete, lastAttemptMinute: old.lastAttemptMinute}
+	}
+	p.mu.Unlock()
+	if changed {
+		select {
+		case p.poke <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (p *Poller) runRelativeVolumeWorker(ctx context.Context) {
+	for {
+		request, ok := p.nextRelativeVolume()
+		if !ok {
+			select {
+			case <-ctx.Done():
+				return
+			case <-p.relativeVolumeWake:
+				continue
+			}
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		fromMs, toMs, ok := relativeVolumeArchiveRange(request.now)
+		if !ok {
+			p.finishRelativeVolume(request, nil, false, nil)
+			continue
+		}
+		bars, err := p.relativeVolumeReader(request.key.symbol, fromMs, toMs)
+		if err != nil {
+			p.finishRelativeVolume(request, nil, false, err)
+			continue
+		}
+		profile, valid := buildRelativeVolumeProfile(request.now, bars)
+		p.finishRelativeVolume(request, profile, valid && profile.complete, nil)
+	}
 }
 
 func validShortInterestDate(value string) bool {
@@ -639,6 +846,11 @@ func (p *Poller) resetIfNewDay(now time.Time) {
 		p.seen = map[string]map[string]bool{}
 		p.floats = map[string]floatEntry{}
 		p.otc = map[string]bool{}
+		p.mu.Lock()
+		p.relativeVolumeCache = map[relativeVolumeCacheKey]relativeVolumeCacheEntry{}
+		p.relativeVolumePending = map[relativeVolumeCacheKey]bool{}
+		p.relativeVolumeQueue = nil
+		p.mu.Unlock()
 	}
 }
 
@@ -784,7 +996,7 @@ func (p *Poller) fetchTopMovers(ctx context.Context, dir int32) ([]rankItem, err
 	var out []rankItem
 	for _, d := range resp.GetS2C().GetDataList() {
 		out = append(out, rankItem{Symbol: symbolOf(d.GetSecurity()),
-			ChangePct: d.GetChangeRatio(), Last: d.GetCurPrice(), Volume: d.GetVolume(), VolumeRatio: validVolumeRatio(d.VolumeRatio)})
+			ChangePct: d.GetChangeRatio(), Last: d.GetCurPrice(), Volume: d.GetVolume()})
 	}
 	return out, nil
 }
@@ -1028,9 +1240,10 @@ func (p *Poller) snapshotBatch(ctx context.Context, phase session.Phase, syms []
 		sym := symbolOf(basic.GetSecurity())
 		got[sym] = true
 		if it, ok := items[sym]; items != nil && ok {
-			if ratio := validVolumeRatio(basic.VolumeRatio); ratio != nil {
-				it.VolumeRatio = ratio
-			}
+			it.RelativeVolume = nil
+			it.cumulativeVolume = nil
+			it.cumulativePhase = phase
+			it.cumulativeDay = session.DayMs(p.clk.Now().UnixMilli())
 			if phase == session.RTH {
 				if basic.GetCurPrice() > 0 {
 					it.Last = basic.GetCurPrice()
@@ -1056,6 +1269,9 @@ func (p *Poller) snapshotBatch(ctx context.Context, phase session.Phase, syms []
 					it.ChangePct = extended.GetChangeRate()
 					it.Volume = extended.GetVolume()
 				}
+			}
+			if cumulative, ok := snapshotCumulativeVolume(basic, phase); ok {
+				it.cumulativeVolume = &cumulative
 			}
 			if p.ssr != nil {
 				it.ShortSellRestricted = p.ssr.IsRestricted(sym, p.clk.Now(), snapshotObservationTime(basic), basic.GetLowPrice(), basic.GetLastClosePrice())

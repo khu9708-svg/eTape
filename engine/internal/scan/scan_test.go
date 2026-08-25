@@ -60,36 +60,27 @@ func TestMostActiveIgnoresChangeThreshold(t *testing.T) {
 	}
 }
 
-func TestVolumeRatioFilter(t *testing.T) {
+func TestRelativeVolumeFilter(t *testing.T) {
 	ratio := func(v float64) *float64 { return &v }
 	items := []rankItem{
-		{Symbol: "US.EQ", VolumeRatio: ratio(2)},
-		{Symbol: "US.LOW", VolumeRatio: ratio(1.99)},
+		{Symbol: "US.EQ", RelativeVolume: ratio(2)},
+		{Symbol: "US.LOW", RelativeVolume: ratio(1.99)},
 		{Symbol: "US.UNKNOWN"},
 	}
 	f := Defaults(config.Scan{})
-	f.MinVolumeRatio = 2
+	f.MinRelativeVolume = 2
 	rows := rankRowsFiltered(items, nil, f)
 	if len(rows) != 1 || rows[0].Symbol != "US.EQ" {
 		t.Fatalf("equality-boundary filter got %+v", rows)
 	}
-	f.MinVolumeRatio = 0
+	f.MinRelativeVolume = 0
 	if got := rankRowsFiltered(items, nil, f); len(got) != len(items) {
 		t.Fatalf("ratio filter off dropped rows: %+v", got)
 	}
 	for _, value := range []float64{-1, math.NaN(), math.Inf(1)} {
-		f.MinVolumeRatio = value
+		f.MinRelativeVolume = value
 		if err := ValidateFilters(f); err == nil {
 			t.Fatalf("invalid minimum ratio %v was accepted", value)
-		}
-	}
-}
-
-func TestInvalidProviderVolumeRatioIsUnavailable(t *testing.T) {
-	for _, value := range []float64{-1, math.NaN(), math.Inf(1)} {
-		got := rankRowsFiltered([]rankItem{{Symbol: "US.A", VolumeRatio: validVolumeRatio(&value)}}, nil, wsmsg.ScannerFilters{Mode: "most_active", MinVolumeRatio: 0})
-		if len(got) != 1 || got[0].VolumeRatio != nil {
-			t.Fatalf("invalid ratio %v should be unavailable: %+v", value, got)
 		}
 	}
 }
@@ -116,7 +107,7 @@ func TestMostActiveExtendedMergesDeduplicatesAndSorts(t *testing.T) {
 			{Security: usSec("A"), PreMarketVolume: proto.Int64(100)}, {Security: usSec("B"), PreMarketVolume: proto.Int64(400)},
 		}}}), nil
 	})
-	p := New(config.Scan{}, r, nil, clock.System{}, nil, nil)
+	p := New(config.Scan{}, r, nil, clock.System{}, nil, nil, nil)
 	got, err := p.fetchRank(context.Background(), session.PreMarket, "most_active")
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +126,7 @@ func TestMostActiveExtendedRejectsHalfBoard(t *testing.T) {
 		}
 		return frameOf(&rankpb.Response{RetType: proto.Int32(0), S2C: &rankpb.S2C{}}), nil
 	})
-	p := New(config.Scan{}, r, nil, clock.System{}, nil, nil)
+	p := New(config.Scan{}, r, nil, clock.System{}, nil, nil, nil)
 	if _, err := p.fetchRank(context.Background(), session.PreMarket, "most_active"); err == nil {
 		t.Fatal("expected error")
 	}
@@ -158,7 +149,7 @@ func TestMostActiveRTHUsesVolumeSortedStockFilter(t *testing.T) {
 			AccumulateDataList: []*filterpb.AccumulateData{{FieldName: proto.Int32(int32(filterpb.AccumulateField_AccumulateField_Volume)), Value: proto.Float64(1234), Days: proto.Int32(1)}, {FieldName: proto.Int32(int32(filterpb.AccumulateField_AccumulateField_ChangeRate)), Value: proto.Float64(4.5), Days: proto.Int32(1)}},
 		}}}}), nil
 	})
-	p := New(config.Scan{}, r, nil, clock.System{}, nil, nil)
+	p := New(config.Scan{}, r, nil, clock.System{}, nil, nil, nil)
 	got, err := p.fetchRank(context.Background(), session.RTH, "most_active")
 	if err != nil || len(got) != 1 || got[0] != (rankItem{Symbol: "US.A", Last: 12.5, ChangePct: 4.5, Volume: 1234}) {
 		t.Fatalf("got=%+v err=%v", got, err)
@@ -396,7 +387,7 @@ func TestShortInterestWorkerDeduplicatesPacesAndRefreshesOnlyBoardSymbols(t *tes
 		}
 		return shortResp(shortItem("2026-07-31", &value)), nil
 	}}
-	p := New(config.Scan{}, fr, &capturePub{}, clk, nil, nil)
+	p := New(config.Scan{}, fr, &capturePub{}, clk, nil, nil, nil)
 	board := []wsmsg.ScannerRow{{Symbol: "US.A"}, {Symbol: "US.B"}}
 	p.overlayShortInterest(board, clk.Now())
 	p.overlayShortInterest(board, clk.Now())
@@ -456,7 +447,7 @@ func TestShortInterestWorkerRetainsLastSuccessThroughFailure(t *testing.T) {
 		value := uint64(547_619)
 		return shortResp(shortItem("2026-07-31", &value)), nil
 	}
-	p := New(config.Scan{}, fr, &capturePub{}, clk, nil, nil)
+	p := New(config.Scan{}, fr, &capturePub{}, clk, nil, nil, nil)
 	p.enqueueShortInterest("US.XOS")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -490,7 +481,7 @@ func TestRunRepublishesShortInterestAfterWorkerWithoutBlockingRank(t *testing.T)
 		},
 	}
 	pub := &capturePub{ranksCh: make(chan wsmsg.ScannerRankPayload, 2)}
-	p := New(config.Scan{Enabled: true, PremarketMs: 1, RTHMs: 1}, fr, pub, clk, nil, nil)
+	p := New(config.Scan{Enabled: true, PremarketMs: 1, RTHMs: 1}, fr, pub, clk, nil, nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = p.Run(ctx) }()
@@ -689,14 +680,9 @@ func marketSnap(code string, outstanding int64, last, close float64, volume int6
 	return s
 }
 
-func marketSnapRatio(code string, outstanding int64, last, close float64, volume int64, ratio *float64) *snappb.Snapshot {
-	s := marketSnap(code, outstanding, last, close, volume)
-	s.Basic.VolumeRatio = ratio
-	return s
-}
-
 func extendedSnap(code string, phase session.Phase, price, change float64, volume int64) *snappb.Snapshot {
 	s := marketSnap(code, 1, 90, 80, 999)
+	s.Basic.PreMarket = &qotcommon.PreAfterMarketData{Volume: proto.Int64(7)}
 	d := &qotcommon.PreAfterMarketData{Price: proto.Float64(price), ChangeRate: proto.Float64(change), Volume: proto.Int64(volume)}
 	switch phase {
 	case session.PostMarket:
@@ -706,11 +692,6 @@ func extendedSnap(code string, phase session.Phase, price, change float64, volum
 	default:
 		s.Basic.PreMarket = d
 	}
-	return s
-}
-
-func snapshotRatio(s *snappb.Snapshot, ratio *float64) *snappb.Snapshot {
-	s.Basic.VolumeRatio = ratio
 	return s
 }
 
@@ -772,13 +753,13 @@ func rankResp(items ...rankItem) *rankpb.Response {
 func topResp(items ...rankItem) *tmrpb.Response {
 	data := make([]*tmrpb.TopMoversRankItem, 0, len(items))
 	for _, it := range items {
-		data = append(data, &tmrpb.TopMoversRankItem{Security: usSec(codeOf(it.Symbol)), ChangeRatio: proto.Float64(it.ChangePct), CurPrice: proto.Float64(it.Last), Volume: proto.Int64(it.Volume), VolumeRatio: it.VolumeRatio})
+		data = append(data, &tmrpb.TopMoversRankItem{Security: usSec(codeOf(it.Symbol)), ChangeRatio: proto.Float64(it.ChangePct), CurPrice: proto.Float64(it.Last), Volume: proto.Int64(it.Volume)})
 	}
 	return &tmrpb.Response{RetType: proto.Int32(0), S2C: &tmrpb.S2C{DataList: data}}
 }
 
 func newTestPoller(cfg config.Scan, fr *fakeReq, pub *capturePub) *Poller {
-	return New(cfg, fr, pub, clock.NewFake(time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)), nil, nil)
+	return New(cfg, fr, pub, clock.NewFake(time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)), nil, nil, nil)
 }
 
 func TestResolveFloatsClassifiesKnownAndBad(t *testing.T) {
@@ -1016,7 +997,7 @@ func TestPollOnceDropsOTCBeforeFloatResolveAndPool(t *testing.T) {
 	sf := &spyFeed{}
 	pub := &capturePub{}
 	p := New(config.Scan{Enabled: true, MinChangePct: 5, MaxFloatShares: 50_000_000, MinVolume: 100_000},
-		fr, pub, clock.NewFake(time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)), sf, nil)
+		fr, pub, clock.NewFake(time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)), sf, nil, nil)
 
 	p.pollOnce(context.Background(), p.clk.Now())
 
@@ -1090,7 +1071,7 @@ func TestRTHBootstrapIsStickyAndRunsOnce(t *testing.T) {
 	}
 	pub := &capturePub{}
 	clk := clock.NewFake(et(2026, 7, 8, 10, 0))
-	p := New(config.Scan{Enabled: true}, fr, pub, clk, nil, nil)
+	p := New(config.Scan{Enabled: true}, fr, pub, clk, nil, nil, nil)
 	p.pollOnce(context.Background(), clk.Now())
 	p.pollOnce(context.Background(), clk.Now())
 	if fr.preCalls != 1 || fr.topCalls != 2 {
@@ -1111,7 +1092,7 @@ func TestRTHBootstrapFailureRetriesWithoutBlocking(t *testing.T) {
 	}}
 	pub := &capturePub{}
 	clk := clock.NewFake(et(2026, 7, 8, 10, 0))
-	p := New(config.Scan{Enabled: true}, fr, pub, clk, nil, nil)
+	p := New(config.Scan{Enabled: true}, fr, pub, clk, nil, nil, nil)
 	p.pollOnce(context.Background(), clk.Now())
 	if len(pub.ranks) != 1 || len(pub.ranks[0].Rows) != 1 {
 		t.Fatalf("RTH must publish despite bootstrap failure: %+v", pub.ranks)
@@ -1133,7 +1114,7 @@ func TestRTHFilterResetRepeatsBootstrap(t *testing.T) {
 		return snapResp(out...), nil
 	}}
 	clk := clock.NewFake(et(2026, 7, 8, 10, 0))
-	p := New(config.Scan{Enabled: true}, fr, &capturePub{}, clk, nil, nil)
+	p := New(config.Scan{Enabled: true}, fr, &capturePub{}, clk, nil, nil, nil)
 	p.pollOnce(context.Background(), clk.Now())
 	f := p.Filters()
 	f.MinVolume = 1
@@ -1143,40 +1124,6 @@ func TestRTHFilterResetRepeatsBootstrap(t *testing.T) {
 	p.pollOnce(context.Background(), clk.Now())
 	if fr.preCalls != 2 {
 		t.Fatalf("filter reset premarket calls=%d", fr.preCalls)
-	}
-}
-
-func TestVolumeRatioAdmissionIsStickyUntilFilterReset(t *testing.T) {
-	ratio := 2.0
-	fr := &fakeReq{rankResp: rankResp(rankItem{Symbol: "US.A", ChangePct: 5}), snap: func([]string) (*snappb.Response, error) {
-		return snapResp(marketSnapRatio("A", 1, 10, 9, 100, proto.Float64(ratio))), nil
-	}}
-	pub := &capturePub{}
-	p := newTestPoller(config.Scan{Enabled: true}, fr, pub)
-	f := p.Filters()
-	f.MinVolumeRatio = 1.5
-	if err := p.SetFilters(f); err != nil {
-		t.Fatal(err)
-	}
-	p.pollOnce(context.Background(), p.clk.Now())
-	if len(pub.ranks) != 1 || len(pub.ranks[0].Rows) != 1 {
-		t.Fatalf("ratio-passing symbol should enter board: %+v", pub.ranks)
-	}
-
-	ratio = 0.5
-	fr.rankResp = rankResp(rankItem{Symbol: "US.A", ChangePct: 5})
-	p.pollOnce(context.Background(), p.clk.Now())
-	if len(pub.ranks) != 2 || len(pub.ranks[1].Rows) != 1 || pub.ranks[1].Rows[0].VolumeRatio == nil || *pub.ranks[1].Rows[0].VolumeRatio != 0.5 {
-		t.Fatalf("later ratio drop should not evict sticky row: %+v", pub.ranks)
-	}
-
-	f.MinVolumeRatio = 1
-	if err := p.SetFilters(f); err != nil {
-		t.Fatal(err)
-	}
-	p.pollOnce(context.Background(), p.clk.Now())
-	if len(pub.ranks) != 3 || len(pub.ranks[2].Rows) != 0 {
-		t.Fatalf("changed threshold should reset and reapply admission: %+v", pub.ranks)
 	}
 }
 
@@ -1190,7 +1137,7 @@ func TestAccumulatedRowsRefreshAndSurviveSnapshotFailure(t *testing.T) {
 	}}
 	pub := &capturePub{}
 	clk := clock.NewFake(et(2026, 7, 8, 8, 0))
-	p := New(config.Scan{Enabled: true}, fr, pub, clk, nil, nil)
+	p := New(config.Scan{Enabled: true}, fr, pub, clk, nil, nil, nil)
 	p.pollOnce(context.Background(), clk.Now())
 	fail = true
 	p.pollOnce(context.Background(), clk.Now())
@@ -1204,22 +1151,27 @@ func TestAccumulatedRowsRefreshAndSurviveSnapshotFailure(t *testing.T) {
 
 func TestSnapshotRefreshUsesActiveSessionData(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		phase  session.Phase
-		want   rankItem
-		makeSn func() *snappb.Snapshot
+		name           string
+		phase          session.Phase
+		want           rankItem
+		makeSn         func() *snappb.Snapshot
+		wantCumulative *int64
 	}{
-		{"premarket", session.PreMarket, rankItem{Last: 101, ChangePct: 1, Volume: 11, VolumeRatio: proto.Float64(1.25)}, func() *snappb.Snapshot {
-			return snapshotRatio(extendedSnap("A", session.PreMarket, 101, 1, 11), proto.Float64(1.25))
-		}},
-		{"after-hours", session.PostMarket, rankItem{Last: 102, ChangePct: 2, Volume: 22, VolumeRatio: proto.Float64(1.25)}, func() *snappb.Snapshot {
-			return snapshotRatio(extendedSnap("A", session.PostMarket, 102, 2, 22), proto.Float64(1.25))
-		}},
-		{"overnight", session.Overnight, rankItem{Last: 103, ChangePct: 3, Volume: 33, VolumeRatio: proto.Float64(1.25)}, func() *snappb.Snapshot {
-			return snapshotRatio(extendedSnap("A", session.Overnight, 103, 3, 33), proto.Float64(1.25))
-		}},
-		{"rth", session.RTH, rankItem{Last: 90, ChangePct: 12.5, Volume: 999, VolumeRatio: proto.Float64(1.25)}, func() *snappb.Snapshot { return marketSnapRatio("A", 1, 90, 80, 999, proto.Float64(1.25)) }},
-		{"missing extended data", session.PreMarket, rankItem{Last: 7, ChangePct: 6, Volume: 5}, func() *snappb.Snapshot { return marketSnap("A", 1, 90, 80, 999) }},
+		{"premarket", session.PreMarket, rankItem{Last: 101, ChangePct: 1, Volume: 11}, func() *snappb.Snapshot {
+			return extendedSnap("A", session.PreMarket, 101, 1, 11)
+		}, proto.Int64(11)},
+		{"after-hours", session.PostMarket, rankItem{Last: 102, ChangePct: 2, Volume: 22}, func() *snappb.Snapshot {
+			return extendedSnap("A", session.PostMarket, 102, 2, 22)
+		}, proto.Int64(1028)},
+		{"overnight", session.Overnight, rankItem{Last: 103, ChangePct: 3, Volume: 33}, func() *snappb.Snapshot {
+			return extendedSnap("A", session.Overnight, 103, 3, 33)
+		}, nil},
+		{"rth", session.RTH, rankItem{Last: 90, ChangePct: 12.5, Volume: 999}, func() *snappb.Snapshot {
+			s := marketSnap("A", 1, 90, 80, 999)
+			s.Basic.PreMarket = &qotcommon.PreAfterMarketData{Volume: proto.Int64(11)}
+			return s
+		}, proto.Int64(1010)},
+		{"missing extended data", session.PreMarket, rankItem{Last: 7, ChangePct: 6, Volume: 5}, func() *snappb.Snapshot { return marketSnap("A", 1, 90, 80, 999) }, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fr := &fakeReq{snap: func([]string) (*snappb.Response, error) { return snapResp(tc.makeSn()), nil }}
@@ -1227,73 +1179,78 @@ func TestSnapshotRefreshUsesActiveSessionData(t *testing.T) {
 			items := map[string]rankItem{"US.A": {Symbol: "US.A", Last: 7, ChangePct: 6, Volume: 5}}
 			p.refreshSnapshots(context.Background(), tc.phase, items)
 			got := items["US.A"]
-			if got.Last != tc.want.Last || got.ChangePct != tc.want.ChangePct || got.Volume != tc.want.Volume || (got.VolumeRatio == nil) != (tc.want.VolumeRatio == nil) || got.VolumeRatio != nil && *got.VolumeRatio != *tc.want.VolumeRatio {
+			if got.Last != tc.want.Last || got.ChangePct != tc.want.ChangePct || got.Volume != tc.want.Volume || (got.cumulativeVolume == nil) != (tc.wantCumulative == nil) || got.cumulativeVolume != nil && *got.cumulativeVolume != *tc.wantCumulative {
 				t.Fatalf("got %+v, want market values %+v", got, tc.want)
 			}
 		})
 	}
 }
 
-func TestRTHVolumeRatioRankFallbackAndSnapshotPriority(t *testing.T) {
-	rankRatio := proto.Float64(3.5)
-	fr := &fakeReq{topMoversRsp: topResp(rankItem{Symbol: "US.A", VolumeRatio: rankRatio}), snap: func([]string) (*snappb.Response, error) {
-		return snapResp(marketSnapRatio("A", 1, 10, 9, 100, proto.Float64(7.25))), nil
-	}}
-	p := newTestPoller(config.Scan{}, fr, &capturePub{})
-	items, err := p.fetchRank(context.Background(), session.RTH)
-	if err != nil || len(items) != 1 || items[0].VolumeRatio == nil || *items[0].VolumeRatio != 3.5 {
-		t.Fatalf("RTH rank fallback=%+v err=%v", items, err)
-	}
-	active := map[string]rankItem{"US.A": items[0]}
-	p.refreshSnapshots(context.Background(), session.RTH, active)
-	if got := active["US.A"].VolumeRatio; got == nil || *got != 7.25 {
-		t.Fatalf("snapshot should override rank fallback: %+v", active["US.A"])
-	}
-
-	active["US.A"] = rankItem{Symbol: "US.A", VolumeRatio: proto.Float64(3.5)}
-	fr.snap = func([]string) (*snappb.Response, error) { return snapResp(marketSnap("A", 1, 10, 9, 100)), nil }
-	p.refreshSnapshots(context.Background(), session.RTH, active)
-	if got := active["US.A"].VolumeRatio; got == nil || *got != 3.5 {
-		t.Fatalf("omitted snapshot should retain RTH rank fallback: %+v", active["US.A"])
-	}
-	fr.snap = func([]string) (*snappb.Response, error) { return nil, fmt.Errorf("temporary") }
-	p.refreshSnapshots(context.Background(), session.RTH, active)
-	if got := active["US.A"].VolumeRatio; got == nil || *got != 3.5 {
-		t.Fatalf("failed snapshot should retain RTH rank fallback: %+v", active["US.A"])
-	}
-}
-
-func TestRTHVolumeRatioRefreshesCurrentFallbackOnStickyRows(t *testing.T) {
-	rankRatio := 2.0
-	fr := &fakeReq{topMoversRsp: topResp(rankItem{Symbol: "US.A", VolumeRatio: proto.Float64(rankRatio)}), snap: func([]string) (*snappb.Response, error) {
-		return snapResp(marketSnapRatio("A", 1, 10, 9, 100, proto.Float64(9))), nil
-	}}
-	pub := &capturePub{}
-	p := New(config.Scan{Enabled: true}, fr, pub, clock.NewFake(et(2026, 7, 8, 10, 0)), nil, nil)
-	p.pollOnce(context.Background(), p.clk.Now())
-	if len(pub.ranks) != 1 || len(pub.ranks[0].Rows) != 1 || pub.ranks[0].Rows[0].VolumeRatio == nil || *pub.ranks[0].Rows[0].VolumeRatio != 9 {
-		t.Fatalf("initial snapshot should win: %+v", pub.ranks)
-	}
-
-	fr.topMoversRsp = topResp(rankItem{Symbol: "US.A", VolumeRatio: proto.Float64(3)})
-	fr.snap = func([]string) (*snappb.Response, error) { return snapResp(marketSnap("A", 1, 10, 9, 100)), nil }
-	p.pollOnce(context.Background(), p.clk.Now())
-	if len(pub.ranks) != 2 || len(pub.ranks[1].Rows) != 1 || pub.ranks[1].Rows[0].VolumeRatio == nil || *pub.ranks[1].Rows[0].VolumeRatio != 3 {
-		t.Fatalf("current RTH rank should replace stale fallback: %+v", pub.ranks)
-	}
-}
-
-func TestSnapshotVolumeRatioRejectsInvalidValues(t *testing.T) {
-	for _, value := range []float64{-1, math.NaN(), math.Inf(1)} {
-		fr := &fakeReq{snap: func([]string) (*snappb.Response, error) {
-			return snapResp(marketSnapRatio("A", 1, 10, 9, 100, proto.Float64(value))), nil
-		}}
-		p := newTestPoller(config.Scan{}, fr, &capturePub{})
-		items := map[string]rankItem{"US.A": {Symbol: "US.A"}}
-		p.refreshSnapshots(context.Background(), session.PreMarket, items)
-		if got := items["US.A"].VolumeRatio; got != nil {
-			t.Fatalf("invalid snapshot ratio %v should be unavailable: %v", value, *got)
+func TestSnapshotCumulativeVolumeRequiresPhaseFields(t *testing.T) {
+	volume := func(value int64) *snappb.SnapshotBasicData {
+		return &snappb.SnapshotBasicData{
+			PreMarket: &qotcommon.PreAfterMarketData{Volume: proto.Int64(value)},
+			Volume:    proto.Int64(10),
+			AfterMarket: &qotcommon.PreAfterMarketData{
+				Volume: proto.Int64(20),
+			},
 		}
+	}
+	for _, tc := range []struct {
+		name  string
+		phase session.Phase
+		basic *snappb.SnapshotBasicData
+		want  *int64
+	}{
+		{"pre zero is valid", session.PreMarket, volume(0), proto.Int64(0)},
+		{"rth adds regular", session.RTH, volume(3), proto.Int64(13)},
+		{"post adds after-hours", session.PostMarket, volume(3), proto.Int64(33)},
+		{"overnight unavailable", session.Overnight, volume(3), nil},
+		{"missing premarket unavailable", session.RTH, &snappb.SnapshotBasicData{Volume: proto.Int64(10)}, nil},
+		{"missing after-hours unavailable", session.PostMarket, &snappb.SnapshotBasicData{PreMarket: &qotcommon.PreAfterMarketData{Volume: proto.Int64(3)}, Volume: proto.Int64(10)}, nil},
+		{"negative unavailable", session.PreMarket, volume(-1), nil},
+		{"overflow unavailable", session.RTH, volume(int64(1<<63 - 1)), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := snapshotCumulativeVolume(tc.basic, tc.phase)
+			if tc.want == nil {
+				if ok {
+					t.Fatalf("got %d, want unavailable", got)
+				}
+				return
+			}
+			if !ok || got != *tc.want {
+				t.Fatalf("got %d/%v, want %d/true", got, ok, *tc.want)
+			}
+		})
+	}
+}
+
+func TestApplyRelativeVolumeClearsAcrossPhaseRollover(t *testing.T) {
+	now := et(2026, 7, 8, 8, 0)
+	p := New(config.Scan{}, nil, nil, clock.NewFake(now), nil, nil, nil)
+	day := session.Schedule(now).Date.UnixMilli()
+	minute, ok := relativeVolumeMinute(now)
+	if !ok {
+		t.Fatal("test time must be in a relative-volume phase")
+	}
+	p.mu.Lock()
+	profile := &relativeVolumeProfile{day: day}
+	profile.counts[minute] = 1
+	profile.means[minute] = 1
+	p.relativeVolumeCache[relativeVolumeCacheKey{symbol: "US.A", day: day}] = relativeVolumeCacheEntry{
+		profile: profile,
+	}
+	p.mu.Unlock()
+	cumulative := int64(2)
+	items := map[string]rankItem{"US.A": {Symbol: "US.A", cumulativeVolume: &cumulative, cumulativePhase: session.PreMarket, cumulativeDay: day}}
+	p.applyRelativeVolumes(now, items)
+	if items["US.A"].RelativeVolume == nil || *items["US.A"].RelativeVolume != 2 {
+		t.Fatalf("premarket relative volume=%v, want 2", valueOfRelativeVolume(items["US.A"].RelativeVolume))
+	}
+	p.applyRelativeVolumes(et(2026, 7, 8, 17, 0), items)
+	if items["US.A"].RelativeVolume != nil {
+		t.Fatalf("stale premarket cumulative volume survived phase rollover: %v", valueOfRelativeVolume(items["US.A"].RelativeVolume))
 	}
 }
 
@@ -1305,7 +1262,7 @@ func TestSnapshotRefreshEnrichesDerivedSSRWithoutChangingCanonicalSymbol(t *test
 		return snapResp(s), nil
 	}}
 	clk := clock.NewFake(et(2026, 7, 8, 10, 0))
-	p := New(config.Scan{}, fr, &capturePub{}, clk, nil, nil, ssr.New(nil))
+	p := New(config.Scan{}, fr, &capturePub{}, clk, nil, nil, nil, ssr.New(nil))
 	items := map[string]rankItem{"US.A": {Symbol: "US.A"}}
 	p.refreshSnapshots(context.Background(), session.RTH, items)
 
@@ -1341,7 +1298,7 @@ func TestBoardSurvivesCycleUntilPostMarketTransition(t *testing.T) {
 	}
 	pub := &capturePub{}
 	clk := clock.NewFake(et(2026, 7, 8, 2, 0))
-	p := New(config.Scan{Enabled: true}, fr, pub, clk, nil, nil)
+	p := New(config.Scan{Enabled: true}, fr, pub, clk, nil, nil, nil)
 	p.pollOnce(context.Background(), et(2026, 7, 8, 2, 0))
 	p.pollOnce(context.Background(), et(2026, 7, 8, 10, 0))
 	if got := len(pub.ranks[1].Rows); got != 3 {
@@ -1419,7 +1376,7 @@ func TestUpdatePoolEnsuresWatchDemandsAndBackfills(t *testing.T) {
 	sf := &spyFeed{}
 	backfillCh := make(chan string, 2)
 	clk := clock.NewFake(et(2026, 7, 8, 14, 0)) // RTH, well inside a pool day
-	p := New(config.Scan{}, &fakeReq{}, &capturePub{}, clk, sf, func(s string) { backfillCh <- s })
+	p := New(config.Scan{}, &fakeReq{}, &capturePub{}, clk, sf, func(s string) { backfillCh <- s }, nil)
 
 	p.updatePool(clk.Now(), rows("US.A", "US.B"))
 
@@ -1457,7 +1414,7 @@ func TestUpdatePoolEnsuresWatchDemandsAndBackfills(t *testing.T) {
 func TestUpdatePoolReleasesOnDayReset(t *testing.T) {
 	sf := &spyFeed{}
 	clk := clock.NewFake(et(2026, 7, 8, 19, 0))
-	p := New(config.Scan{}, &fakeReq{}, &capturePub{}, clk, sf, nil) // nil backfill tolerated
+	p := New(config.Scan{}, &fakeReq{}, &capturePub{}, clk, sf, nil, nil) // nil backfill tolerated
 
 	p.updatePool(et(2026, 7, 8, 19, 0), rows("US.A", "US.B")) // pool day D
 	p.updatePool(et(2026, 7, 8, 20, 0), rows("US.C"))         // crosses 20:00 ET -> day D+1
@@ -1470,7 +1427,7 @@ func TestUpdatePoolReleasesOnDayReset(t *testing.T) {
 
 func TestUpdatePoolNilFeedInert(t *testing.T) {
 	clk := clock.NewFake(et(2026, 7, 8, 14, 0))
-	p := New(config.Scan{}, &fakeReq{}, &capturePub{}, clk, nil, nil)
+	p := New(config.Scan{}, &fakeReq{}, &capturePub{}, clk, nil, nil, nil)
 	p.updatePool(clk.Now(), rows("US.A")) // must not panic
 	if p.PoolSymbols() != nil {
 		t.Fatalf("nil feed must disable the pool: PoolSymbols()=%v", p.PoolSymbols())
@@ -1487,11 +1444,44 @@ func TestPollOnceDrivesPool(t *testing.T) {
 	sf := &spyFeed{}
 	clk := clock.NewFake(et(2026, 7, 8, 8, 0)) // pre-market
 	p := New(config.Scan{Enabled: true, MinChangePct: 5, MaxFloatShares: 50_000_000, MinVolume: 100_000},
-		fr, &capturePub{}, clk, sf, nil)
+		fr, &capturePub{}, clk, sf, nil, nil)
 
 	p.pollOnce(context.Background(), clk.Now())
 
 	if len(sf.ensured) != 1 || sf.ensured[0].ID != "scan:US.LOWF" {
 		t.Fatalf("pollOnce should Ensure the filtered top row via the pool: %+v", sf.ensured)
+	}
+}
+
+func TestPositiveRelativeVolumeFilterStillWarmsPool(t *testing.T) {
+	fr := &fakeReq{
+		rankResp: rankResp(rankItem{Symbol: "US.LOWF", ChangePct: 12.5, Last: 4.2, Volume: 300_000}),
+		snap: func([]string) (*snappb.Response, error) {
+			return snapResp(marketSnap("LOWF", 20_000_000, 4.2, 3.5, 300_000)), nil
+		},
+	}
+	sf := &spyFeed{}
+	pub := &capturePub{}
+	clk := clock.NewFake(et(2026, 7, 8, 8, 0))
+	p := New(config.Scan{Enabled: true}, fr, pub, clk, sf, nil, func(string, int64, int64) ([]feed.Bar, error) {
+		return nil, nil
+	})
+	filters := p.Filters()
+	filters.MinRelativeVolume = 2
+	if err := p.SetFilters(filters); err != nil {
+		t.Fatal(err)
+	}
+	p.pollOnce(context.Background(), clk.Now())
+	if len(sf.ensured) != 1 || sf.ensured[0].ID != "scan:US.LOWF" {
+		t.Fatalf("positive REL VOL must not block pool warming: %+v", sf.ensured)
+	}
+	if len(pub.ranks) != 1 || len(pub.ranks[0].Rows) != 0 {
+		t.Fatalf("unavailable REL VOL should block new board admission: %+v", pub.ranks)
+	}
+	p.mu.RLock()
+	queued := len(p.relativeVolumeQueue)
+	p.mu.RUnlock()
+	if queued != 1 {
+		t.Fatalf("pool symbol should queue one archive read, queued=%d", queued)
 	}
 }

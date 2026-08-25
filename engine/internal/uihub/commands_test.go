@@ -244,6 +244,36 @@ func TestCommandsSetConfigNotifiesRuntimeAfterPersisting(t *testing.T) {
 	}
 }
 
+type scannerCtlTestSpy struct {
+	filters wsmsg.ScannerFilters
+}
+
+func (s *scannerCtlTestSpy) Filters() wsmsg.ScannerFilters { return s.filters }
+func (s *scannerCtlTestSpy) SetFilters(filters wsmsg.ScannerFilters) error {
+	s.filters = filters
+	return nil
+}
+
+func TestCommandsSetScannerFiltersPersistsV2(t *testing.T) {
+	cfg := &spyCfg{}
+	scanner := &scannerCtlTestSpy{}
+	cd := newCommands(&spyExec{}, cfg, &spyInd{}, &spyDemandCtl{}, &spyVenueAdmin{}, func() Feed { return nil }, &spyVenueTester{})
+	cd.scanner.Store(&scannerBox{scanner: scanner})
+
+	want := wsmsg.ScannerFilters{Mode: "gainers", MinRelativeVolume: 2.5, FloatUnit: "M", VolumeUnit: "K"}
+	ack, _ := cd.handle(context.Background(), "SetScannerFilters", mustJSON(t, wsmsg.SetScannerFiltersArgs{Filters: want}), 0, func(wsmsg.AckMsg) {})
+	if ack.Status != wsmsg.AckAccepted || !reflect.DeepEqual(scanner.filters, want) {
+		t.Fatalf("SetScannerFilters ack/filters = %+v / %+v", ack, scanner.filters)
+	}
+	var saved wsmsg.ScannerFilters
+	if err := json.Unmarshal([]byte(cfg.got["scanner.filters.v2"]), &saved); err != nil || !reflect.DeepEqual(saved, want) {
+		t.Fatalf("persisted v2 = %q, err=%v", cfg.got["scanner.filters.v2"], err)
+	}
+	if _, ok := cfg.got["scanner.filters.v1"]; ok {
+		t.Fatal("SetScannerFilters must not write legacy v1")
+	}
+}
+
 func TestCommandsDeleteConfig(t *testing.T) {
 	cfg := &spyCfg{}
 	cd := newCommands(&spyExec{}, cfg, &spyInd{}, &spyDemandCtl{}, &spyVenueAdmin{}, func() Feed { return nil }, &spyVenueTester{})

@@ -272,7 +272,7 @@ func (cd *commands) handle(ctx context.Context, name string, args json.RawMessag
 			return blocked(err.Error()), false
 		}
 		raw, _ := json.Marshal(a.Filters)
-		cd.cfg.SetConfig("scanner.filters.v1", string(raw))
+		cd.cfg.SetConfig("scanner.filters.v2", string(raw))
 		return wsmsg.AckMsg{Status: "accepted", Value: a.Filters}, false
 	case "SubscribeIndicator":
 		var a struct {

@@ -516,7 +516,7 @@ describe("AppShell Monitoring Scanner Sync", () => {
     fireEvent.click(screen.getByRole("button", { name: "Use this Scanner as Monitoring Source" }));
 
     const row = (symbol: string, shortInterest: number | null) => ({
-      symbol, changePct: 1, last: 1, floatShares: 1, volume: 1, volumeRatio: null,
+      symbol, changePct: 1, last: 1, floatShares: 1, volume: 1, relativeVolume: null,
       shortInterest, shortInterestAsOf: shortInterest === null ? null : "2026-07-31",
     });
     act(() => stores.scanner.apply({ kind: "snapshot", topic: "scanner.rank", key: "rth", payload: {

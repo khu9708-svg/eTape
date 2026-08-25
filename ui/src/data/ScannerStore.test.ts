@@ -7,16 +7,16 @@ const rank = (kind: "snapshot" | "delta", session: string, payload: ScannerRankP
 const hit = (session: string, payload: ScanHitPayload) =>
   ({ kind: "delta", topic: "scanner.hit", key: session, payload } as DeltaMsg);
 const r = (symbol: string, changePct: number) =>
-  ({ symbol, shortSellRestricted: false, changePct, last: 1, floatShares: 1_000_000, volume: 1000, volumeRatio: null, shortInterest: null, shortInterestAsOf: null });
+  ({ symbol, shortSellRestricted: false, changePct, last: 1, floatShares: 1_000_000, volume: 1000, relativeVolume: null, shortInterest: null, shortInterestAsOf: null });
 
 describe("ScannerStore", () => {
-  it("normalizes legacy rows without Volume Ratio", () => {
+  it("normalizes legacy rows without REL VOL", () => {
     const s = new ScannerStore();
     s.apply({ kind: "snapshot", topic: "scanner.rank", key: "premarket", payload: {
       refreshedAt: "2026-07-06T13:00:00Z",
       rows: [{ symbol: "US.LEGACY", shortSellRestricted: false, changePct: 1, last: 1, floatShares: null, volume: 1 }],
     } } as unknown as SnapshotMsg);
-    expect(s.view("premarket").rows[0].volumeRatio).toBeNull();
+    expect(s.view("premarket").rows[0].relativeVolume).toBeNull();
     expect(s.view("premarket").rows[0].shortInterest).toBeNull();
     expect(s.view("premarket").rows[0].shortInterestAsOf).toBeNull();
   });
@@ -90,7 +90,7 @@ describe("ScannerStore", () => {
 // Distinct name to avoid colliding with the file's existing `rank(kind, session, payload)`.
 const rankMsg = (kind: "snapshot" | "delta", symbols: string[]) => ({
   kind, topic: "scanner.rank" as const, key: "premarket",
-  payload: { refreshedAt: "2026-07-06T13:00:00Z", rows: symbols.map((symbol) => ({ symbol, shortSellRestricted: false, changePct: 5, last: 1, floatShares: 1, volume: 1, volumeRatio: null, shortInterest: null, shortInterestAsOf: null })) },
+  payload: { refreshedAt: "2026-07-06T13:00:00Z", rows: symbols.map((symbol) => ({ symbol, shortSellRestricted: false, changePct: 5, last: 1, floatShares: 1, volume: 1, relativeVolume: null, shortInterest: null, shortInterestAsOf: null })) },
 });
 
 describe("ScannerStore.onNewHit", () => {
