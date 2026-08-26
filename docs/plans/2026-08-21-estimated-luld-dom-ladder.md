@@ -2,6 +2,11 @@
 
 Status: Approved on 2026-08-21.
 
+> **Presentation superseded on 2026-08-25:** The fixed-strip readout and
+> dashed L/U-marker presentation are superseded by
+> [LULD Boundary Rows in DOM Ladder](2026-08-25-luld-boundary-rows.md).
+> Its engine, wire-contract, calculation, and display-only decisions remain in force.
+
 ## Goal
 
 Show a compact **Estimated LULD Band** in the Level 2 DOM ladder without an

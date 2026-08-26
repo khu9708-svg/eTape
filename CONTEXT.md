@@ -38,7 +38,7 @@ _Avoid_: Monitoring window, monitoring layout
 
 **Scanner Sync**:
 A persistent, toggleable Monitoring Workspace mode driven by one Scanner Source that maintains pinned Chart Panel symbols from ranked Scanner results. Its top set contains as many symbols as the Monitoring Workspace has pinned Chart Panels; a Chart Panel keeps its current symbol until it leaves that set. It remains enabled but pauses when no pinned Chart Panel exists; unmatched Chart Panels retain their current symbols when the Scanner Source returns too few rows.
-The Scanner Source's selected sort order, including Volume Ratio and Reported Short Interest, determines that top set.
+The Scanner Source's selected sort order, including Relative Volume (Daily Rate) and Reported Short Interest, determines that top set.
 _Avoid_: Auto load, scanner auto-refresh
 
 **Unassigned Chart Panel**:
@@ -93,13 +93,12 @@ _Avoid_: Short volume, shortable shares, borrow availability
 The provider's reporting settlement date associated with a Reported Short Interest value. It describes the delayed position report, not a live quote time or Scanner refresh time.
 _Avoid_: Quote timestamp, live timestamp
 
-**Volume Ratio**:
-The ratio of current average per-minute trading volume since market open to the prior five trading days’ average per-minute trading volume. It is a multiplier, not a percentage or a same-time-of-day cumulative-volume comparison.
-Scanner displays the provider-supplied number without a multiplier suffix during regular and extended sessions when it is available; an unavailable value is not zero.
-_Avoid_: Relative Volume
+**Relative Volume (Daily Rate)**:
+A Scanner multiplier intended to reproduce Warrior Trading's Relative Volume (Daily Rate): current cumulative volume from 04:00 through 20:00 ET divided by the arithmetic mean of cumulative volume through that same ET minute across the prior 15 complete trading days. A quiet minute contributes zero volume, but a historical day with no trading data does not qualify; an early-close day contributes only through its own data close. The value is unavailable until all 15 qualifying days and a positive baseline exist. The Scanner column is labelled `REL VOL`; it replaces the legacy provider Volume Ratio and is not a percentage.
+_Avoid_: Volume Ratio
 
-**Volume Ratio Filter**:
-A Scanner minimum Volume Ratio multiplier. It is off at zero; when active, a row with an unavailable Volume Ratio does not match.
+**Relative Volume (Daily Rate) Filter**:
+A Scanner minimum Relative Volume (Daily Rate) multiplier. It is off at zero; when active, a row with an unavailable value does not match.
 _Avoid_: Percentage filter, volume filter
 
 ## Order Entry
@@ -205,6 +204,14 @@ _Avoid_: Latest print, mark trade
 **Estimated LULD Band**:
 A display-only, locally calculated approximation of a U.S. Limit Up-Limit Down price band derived from non-SIP market data. It can be unavailable or frozen; it is never an official LULD band, Limit State, Straddle State, Trading Pause, or order-entry control.
 _Avoid_: Official LULD, halt signal
+
+**LULD Boundary Row**:
+A display-only DOM Ladder row that identifies the lower or upper price of an Estimated LULD Band. It is not market liquidity or an order-entry control.
+_Avoid_: Depth level, book quote, LULD event
+
+**Configured Depth**:
+The number of real bid or ask price levels a DOM Ladder makes available for scrolling. A LULD Boundary Row is additional to Configured Depth.
+_Avoid_: Total ladder rows, LULD-inclusive depth
 
 **Volume-Eligible Print**:
 A Reported Print whose Trade-Report Condition makes its shares eligible for consolidated volume and tick-derived volume statistics, independently of its price eligibility.
