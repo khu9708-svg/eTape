@@ -8,4 +8,6 @@ Built-in and newly added symbol-bearing panels start unassigned. General Layout 
 
 The 10-second chart renders missing weekday 04:00–20:00 ET buckets as client-only synthetic flat bars at the preceding real close, with empty volume. These marked display bars are not stored or included in indicators, and generation pauses at the session close until another real bar arrives.
 
+A 10-second Chart Panel also consumes the bounded per-symbol tape ring only for a display-only Last Reported Price comparison; Reported Prints never enter React state or alter chart data.
+
 Children: [application source](src/README.md), [mock engine](mock-engine/README.md), [E2E](e2e/README.md), [test support](test/README.md). Fixtures/assets/generated output excluded from guide leaves. Commands: `npm test`, `npm run typecheck`, `npm run lint`, `npm run e2e`.

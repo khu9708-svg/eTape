@@ -53,7 +53,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'chart-panel',
-          include: ['src/chrome/panels/ChartPanel.test.tsx', 'src/chrome/panels/tv/BarCloseTimer.test.tsx'],
+          include: ['src/chrome/panels/ChartPanel.test.tsx', 'src/chrome/panels/tv/BarCloseTimer.test.tsx', 'src/chrome/panels/tv/TVLegend.test.tsx'],
         },
       },
       {

@@ -48,6 +48,14 @@ a valid sample, charts use browser time and retain the last valid offset across
 a failed probe. A rate-limited `chart market clock boundary` trace records the
 clock inputs used for diagnostics.
 
+The live `10s` legend may add a neutral `Reported n.nnn` readout beside Volume
+when the current same-session Last-Eligible Price and the newest per-symbol Last
+Reported Price are both available and differ at the three-decimal display
+precision. It follows the tape-ring head, stays visible in Live View and Future
+Buffer, hides in Historical View, and remains live while the crosshair inspects
+another candle. This readout is display-only: it cannot affect OHLC, volume,
+VWAP, indicators, price autoscale, execution marks, fills, risk checks, or orders.
+
 Chart drawings consume the Future Buffer as future chart positions. Their future
 Drawing Anchors are not clamped to the newest loaded bar; incoming displayed bars
 eventually align with those anchors.

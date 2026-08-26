@@ -201,6 +201,14 @@ _Avoid_: Wick trade, outlier trade
 A Price-Forming Print eligible to update consolidated open, close, and last-price state, including the execution mark.
 _Avoid_: Latest print, mark trade
 
+**Last-Eligible Price**:
+The current trusted market price established by the most recent Last-Eligible Print. It can differ from the newest reported transaction when that report is not eligible to update last-price state.
+_Avoid_: Last price, latest price
+
+**Last Reported Price**:
+The price of the newest Reported Print accepted into Time & Sales order, regardless of its statistical eligibility. It is informational and can differ from the Last-Eligible Price.
+_Avoid_: Last-eligible price, candle close
+
 **Estimated LULD Band**:
 A display-only, locally calculated approximation of a U.S. Limit Up-Limit Down price band derived from non-SIP market data. It can be unavailable or frozen; it is never an official LULD band, Limit State, Straddle State, Trading Pause, or order-entry control.
 _Avoid_: Official LULD, halt signal
