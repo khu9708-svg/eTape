@@ -400,6 +400,7 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
     // while market data changes the series.
     let pointerStart: { x: number; y: number } | null = null;
     let viewportGesture = false;
+    let wheelEndTimer: ReturnType<typeof setTimeout> | null = null;
     const isDrawingUi = (target: EventTarget | null) => {
       const element = target as { closest?: (selector: string) => unknown } | null;
       return typeof element?.closest === "function" && Boolean(element.closest("[data-drawing-ui]"));
@@ -415,20 +416,29 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
       if (event.buttons === 0 && event.pointerType !== "touch") return;
       if (Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) < 2) return;
       viewportGesture = true;
-      controller.noteUserViewportInteraction();
+      controller.noteUserViewportInteraction(true);
     };
     const onViewportPointerUp = () => {
-      if (viewportGesture) controller.noteUserViewportInteraction();
+      if (viewportGesture && wheelEndTimer === null) controller.noteUserViewportInteraction(false);
       pointerStart = null;
       viewportGesture = false;
     };
     const onViewportWheel = (event: WheelEvent) => {
-      if (!isDrawingUi(event.target)) controller.noteUserViewportInteraction();
+      if (isDrawingUi(event.target)) return;
+      controller.noteUserViewportInteraction(true);
+      if (wheelEndTimer !== null) clearTimeout(wheelEndTimer);
+      // Wheel has no matching end event; an idle gap closes one trackpad/mouse burst.
+      wheelEndTimer = setTimeout(() => {
+        wheelEndTimer = null;
+        if (!viewportGesture) {
+          controller.noteUserViewportInteraction(false);
+        }
+      }, 100);
     };
     host.addEventListener("pointerdown", onViewportPointerDown);
     host.addEventListener("pointermove", onViewportPointerMove);
-    host.addEventListener("pointerup", onViewportPointerUp);
-    host.addEventListener("pointercancel", onViewportPointerUp);
+    window.addEventListener("pointerup", onViewportPointerUp);
+    window.addEventListener("pointercancel", onViewportPointerUp);
     host.addEventListener("wheel", onViewportWheel);
 
     // Restore persisted indicator instances (colors + params) saved with the workspace.
@@ -751,9 +761,10 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
       off(); offLink(); offHistoryReady(); offCrosshair(); ro.disconnect();
       host.removeEventListener("pointerdown", onViewportPointerDown);
       host.removeEventListener("pointermove", onViewportPointerMove);
-      host.removeEventListener("pointerup", onViewportPointerUp);
-      host.removeEventListener("pointercancel", onViewportPointerUp);
+      window.removeEventListener("pointerup", onViewportPointerUp);
+      window.removeEventListener("pointercancel", onViewportPointerUp);
       host.removeEventListener("wheel", onViewportWheel);
+      if (wheelEndTimer !== null) clearTimeout(wheelEndTimer);
       timeScale.unsubscribeVisibleLogicalRangeChange(clampRight);
       // Cancel any rAF-batched legend/selection recompute still pending from
       // the schedulers above so it doesn't fire after this chart unmounts.

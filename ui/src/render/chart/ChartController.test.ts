@@ -828,6 +828,31 @@ describe("ChartController", () => {
     expect(facade.scrolls).toBe(1);
   });
 
+  it("preserves an active gesture range through a 10s rebuild", () => {
+    const base = Date.parse("2026-07-06T13:30:00Z");
+    const reader = mutableBarReader([
+      tenSecondBar(new Date(base).toISOString(), 10),
+      tenSecondBar(new Date(base + 30_000).toISOString(), 11),
+    ]);
+    const { facade, ctrl } = make10s(reader);
+    ctrl.sync(base + 30_000);
+    const beforeLogical = { from: 0, to: 3 };
+    facade.scrollPosition = 0;
+    facade.visibleLogicalRange = beforeLogical;
+    ctrl.noteUserViewportInteraction(true);
+    reader.set([
+      tenSecondBar(new Date(base).toISOString(), 10),
+      tenSecondBar(new Date(base + 10_000).toISOString(), 10),
+      tenSecondBar(new Date(base + 30_000).toISOString(), 11),
+      tenSecondBar(new Date(base + 40_000).toISOString(), 12),
+    ]);
+
+    ctrl.sync(base + 50_000);
+
+    expect(facade.setVisibleLogicalRangeCalls.at(-1)).toEqual(beforeLogical);
+    expect(facade.scrolls).toBe(1);
+  });
+
   it("future-detached 10s rebuild shifts the logical range for a front prepend", () => {
     const base = Date.parse("2026-07-06T13:30:00Z");
     const reader = mutableBarReader([
@@ -868,6 +893,29 @@ describe("ChartController", () => {
     ctrl.sync(base + 60_000);
     expect(facade.setVisibleLogicalRangeCalls.at(-1)).toEqual({ from: 2, to: 5 });
     expect(facade.scrolls).toBe(1);
+  });
+
+  it("preserves zoom and Future Buffer when a 10s tail slot disappears", () => {
+    const base = Date.parse("2026-07-06T13:30:00Z");
+    const { facade, ctrl } = make10s(barReaderOf([
+      tenSecondBar(new Date(base).toISOString(), 10),
+    ]));
+    ctrl.sync(base + 30_000);
+    expect(ctrl.displayBars()).toHaveLength(3);
+    const beforeLogical = { from: -100, to: 30 };
+    facade.scrollPosition = 25;
+    facade.visibleLogicalRange = beforeLogical;
+    facade.visibleRange = { from: base / 1000, to: (base + 20_000) / 1000 };
+
+    // Reproduce the captured structural shrink: the prior display tail vanishes
+    // while the user still has detached future space and the remaining slots are
+    // an unchanged prefix. A timestamp restore makes LWC fit those anchors and
+    // asynchronously changes bar spacing.
+    ctrl.sync(base + 20_000);
+
+    expect(ctrl.displayBars()).toHaveLength(2);
+    expect(facade.setVisibleRangeCalls).toHaveLength(0);
+    expect(facade.setVisibleLogicalRangeCalls.at(-1)).toEqual(beforeLogical);
   });
 
   it("a 10s rebuild with a missing old tail preserves time instead of jumping live", () => {

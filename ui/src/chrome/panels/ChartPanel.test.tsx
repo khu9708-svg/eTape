@@ -178,7 +178,7 @@ describe("ChartPanel", () => {
     expect(timeScaleApi.unsubscribeVisibleLogicalRangeChange).toHaveBeenCalledWith(clampRight);
   });
 
-  it("samples viewport intent through the full pointer-drag lifecycle", () => {
+  it("samples pointer and wheel viewport intent through their full lifecycles", () => {
     const noteViewport = vi.spyOn(ChartController.prototype, "noteUserViewportInteraction");
     try {
       const { getByTestId } = renderChart();
@@ -197,8 +197,64 @@ describe("ChartPanel", () => {
       // The first move crosses the threshold while still live; the continued
       // move and pointer-up must sample the final historical position too.
       expect(noteViewport).toHaveBeenCalledTimes(3);
+      expect(noteViewport.mock.calls.map(([active]) => active)).toEqual([true, true, false]);
+
+      noteViewport.mockClear();
+      vi.useFakeTimers();
+      fireEvent.wheel(host);
+      expect(noteViewport).toHaveBeenLastCalledWith(true);
+      act(() => { vi.advanceTimersByTime(100); });
+      expect(noteViewport).toHaveBeenLastCalledWith(false);
     } finally {
+      vi.useRealTimers();
       noteViewport.mockRestore();
+    }
+  });
+
+  it("does not move the 10s viewport when a bar arrives during a pointer drag", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-07-09T13:31:05Z"));
+    try {
+      const first: Bar = {
+        symbol: "US.AAPL", timeframe: "10s", bucketStart: "2026-07-09T13:31:00.000Z",
+        o: 100, h: 100.6, l: 99.9, c: 100.5, v: 100, inProgress: false,
+      };
+      const { stores, getSurface, getByTestId } = renderChartCapturingSurface({ timeframe: "10s" }, {
+        symbol: "US.AAPL", timeframe: "10s", fromMs: Date.parse(first.bucketStart),
+        toMs: Date.parse(first.bucketStart) + 10_000, bars: [first], indicators: [], historyRevision: 1,
+      });
+      act(() => stores.health.apply({ kind: "delta", topic: "sys.events", payload: {
+        seq: 1, ts: "2026-08-03T01:00:00Z", kind: "chart-ready", detail: "US.AAPL",
+      } }));
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      act(() => { getSurface().paint(); });
+
+      timeScaleApi.getVisibleLogicalRange.mockReturnValue({ from: -9, to: 1 });
+      timeScaleApi.scrollPosition.mockReturnValue(0);
+      timeScaleApi.setVisibleLogicalRange.mockClear();
+      timeScaleApi.scrollToPosition.mockClear();
+
+      const host = getByTestId("chart-host");
+      fireEvent.pointerDown(host, { button: 0, pointerType: "mouse", clientX: 0, clientY: 0 });
+      fireEvent.pointerMove(host, { buttons: 1, pointerType: "mouse", clientX: 4, clientY: 0 });
+      now.mockReturnValue(Date.parse("2026-07-09T13:31:11Z"));
+      pushLiveBar(stores, "US.AAPL", "10s", 100.5, 101, true, "2026-07-09T13:31:10.000Z");
+      act(() => { getSurface().paint(); });
+
+      expect(timeScaleApi.setVisibleLogicalRange).toHaveBeenLastCalledWith({ from: -9, to: 1 });
+      expect(timeScaleApi.scrollToPosition).not.toHaveBeenCalled();
+
+      fireEvent.pointerUp(host, { pointerType: "mouse" });
+      timeScaleApi.setVisibleLogicalRange.mockClear();
+      now.mockReturnValue(Date.parse("2026-07-09T13:31:21Z"));
+      pushLiveBar(stores, "US.AAPL", "10s", 101, 101.5, true, "2026-07-09T13:31:20.000Z");
+      act(() => { getSurface().paint(); });
+
+      expect(timeScaleApi.setVisibleLogicalRange).toHaveBeenLastCalledWith({ from: -8, to: 2 });
+      expect(timeScaleApi.scrollToPosition).not.toHaveBeenCalled();
+    } finally {
+      timeScaleApi.getVisibleLogicalRange.mockReturnValue(null);
+      timeScaleApi.scrollPosition.mockReturnValue(0);
+      now.mockRestore();
     }
   });
 

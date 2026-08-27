@@ -129,6 +129,7 @@ export class ChartController {
   private volumeVisible = true;
   private watermarkOn = false;
   private pendingBoundaryFollowMs: number | null = null;
+  private viewportInteractionActive = false;
   // Suppressed while ChartPanel is showing its own merged price+countdown badge
   // (BarCloseTimer) so LWC's built-in tag doesn't double up behind it; restored
   // whenever the main series is recreated (setChartType) or restyled (setPalette),
@@ -258,7 +259,10 @@ export class ChartController {
         this.candle.update(this.mainPoint(bars[i]));
         this.volume.update(toVolume(bars[i], this.palette));
       }
-      if (this.config.timeframe === "10s") {
+      if (this.viewportInteractionActive) {
+        this.pendingBoundaryFollowMs = null;
+        if (beforeLogical) this.facade.setVisibleLogicalRange(beforeLogical);
+      } else if (this.config.timeframe === "10s") {
         this.followTenSecondAppend(oldAppliedCount, appendedCount, beforeLogical);
       } else if (beforeScrollPosition !== null) {
         const mode = this.managedViewportMode(beforeScrollPosition);
@@ -323,6 +327,10 @@ export class ChartController {
     if (bars.length > 0) {
       if (this.config.timeframe === "10s") {
         this.restoreTenSecondViewport(bars, beforeTime, beforeLogical, oldLastLogical, oldTailBucket, sameTimeSlots, confirmedDataGap);
+      } else if (this.viewportInteractionActive && oldLastLogical >= 0) {
+        this.pendingBoundaryFollowMs = null;
+        if (beforeLogical) this.facade.setVisibleLogicalRange(beforeLogical);
+        else if (beforeTime) this.facade.setVisibleRange(beforeTime);
       } else if (!managedFollow) {
         if (wasFollowingLive) {
           // setData can change the logical right offset even when the latest bar
@@ -429,6 +437,7 @@ export class ChartController {
       this.scrollToLive();
       return;
     }
+    if (this.viewportInteractionActive) this.pendingBoundaryFollowMs = null;
     if (sameTimeSlots) {
       if (beforeLogical) this.facade.setVisibleLogicalRange(beforeLogical);
       else if (beforeTime) this.facade.setVisibleRange(beforeTime);
@@ -442,9 +451,15 @@ export class ChartController {
 
     const oldTailIndex = findBucketIndex(bars, oldTailBucket);
     if (oldTailIndex < 0) {
-      // A confirmed gap can remove the provisional old tail. Timestamps are
-      // the only stable anchors left, so restore the time range verbatim.
-      if (beforeTime) this.facade.setVisibleRange(beforeTime);
+      const removedTailSuffix = bars.length < this.displayedBars.length
+        && bars.every((bar, i) => Date.parse(bar.bucketStart) === Date.parse(this.displayedBars[i].bucketStart));
+      // A disappearing provisional suffix keeps every remaining logical anchor
+      // stable. Preserve that logical range so LWC cannot fit the timestamp
+      // anchors across the viewport and collapse detached future space.
+      if (removedTailSuffix && beforeLogical) this.facade.setVisibleLogicalRange(beforeLogical);
+      // A generation replacement has no shared tail/index anchor, so timestamps
+      // remain the conservative fallback.
+      else if (beforeTime) this.facade.setVisibleRange(beforeTime);
       return;
     }
     const indexShift = oldTailIndex - oldLastLogical;
@@ -454,6 +469,10 @@ export class ChartController {
     } : null;
     if (!shiftedLogical) {
       if (beforeTime) this.facade.setVisibleRange(beforeTime);
+      return;
+    }
+    if (this.viewportInteractionActive) {
+      this.facade.setVisibleLogicalRange(shiftedLogical);
       return;
     }
     if (!beforeLogical || !logicalSlotVisible(oldLastLogical, beforeLogical)) {
@@ -839,6 +858,7 @@ export class ChartController {
     this.suspendedRawCount = 0;
     this.suspendedRawTailBucket = "";
     this.pendingBoundaryFollowMs = null;
+    this.viewportInteractionActive = false;
     this.displayedBars = [];
     this.barsMsCache = [];
     this.bandsCache = [];
@@ -921,6 +941,7 @@ export class ChartController {
     this.suspendedRawCount = 0;
     this.suspendedRawTailBucket = "";
     this.pendingBoundaryFollowMs = null;
+    this.viewportInteractionActive = false;
     this.displayedBars = [];
     this.barsMsCache = [];
     this.bandsCache = [];
@@ -973,11 +994,12 @@ export class ChartController {
   }
 
   resize(w: number, h: number): void { this.facade.resize(w, h); }
-  noteUserViewportInteraction(): void {
+  noteUserViewportInteraction(active = false): void {
     if (!usesBoundaryManagedFollow(this.config.timeframe)) return;
+    this.viewportInteractionActive = active;
     const mode = classifyManagedViewport(this.facade.getScrollPosition());
     this.setViewportMode(mode);
-    if (mode !== "live") this.pendingBoundaryFollowMs = null;
+    if (active || mode !== "live") this.pendingBoundaryFollowMs = null;
   }
   resetZoom(): void { this.setViewportMode("live"); this.facade.resetTimeScale(); this.facade.resetPriceScale(); }
   dispose(): void {

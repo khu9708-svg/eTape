@@ -31,7 +31,12 @@ at least partially visible. If it is completely outside the view, the current
 range and zoom are preserved. Future Buffer space is consumed until four empty
 bar widths remain; after that, the range shifts by the number of appended
 slots while preserving its width. Corrections and gap repair preserve the
-existing timestamp view. Symbol/timeframe changes start in Live View, and
+current viewport and zoom; a disappearing provisional tail keeps its logical
+Future Buffer, while a generation replacement stays timestamp-anchored. While
+a pointer or wheel gesture is active, bars keep painting but structural updates
+preserve the gesture's current range; release reclassifies that final range
+without replaying missed movement.
+Symbol/timeframe changes start in Live View, and
 Reset Chart View restores default spacing, four-bar right padding, and price
 auto-scaling. The chart menu exposes Reset Chart View; it has no separate live
 navigation command.
