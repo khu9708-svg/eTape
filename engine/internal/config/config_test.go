@@ -270,6 +270,9 @@ func TestBackfillAlpacaDefaults(t *testing.T) {
 
 func TestFeedQuotaWarnDefaults(t *testing.T) {
 	c := Default()
+	if c.Feed.QuotaSlots != 300 {
+		t.Fatalf("QuotaSlots default = %d, want 300", c.Feed.QuotaSlots)
+	}
 	if c.Feed.QuotaWarnHeadroom != 12 {
 		t.Fatalf("QuotaWarnHeadroom default = %d, want 12", c.Feed.QuotaWarnHeadroom)
 	}

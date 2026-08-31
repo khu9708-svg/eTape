@@ -31,12 +31,13 @@ func (o OpenD) Addr() string { return net.JoinHostPort(o.Host, strconv.Itoa(o.Po
 type Feed struct {
 	ExtendedTime        bool `toml:"extended_time"`
 	UnsubHysteresisSecs int  `toml:"unsub_hysteresis_secs"`
-	QuotaSlots          int  `toml:"quota_slots"`
+	// QuotaSlots is the local admission cap; keep it at or below OpenD entitlement.
+	QuotaSlots int `toml:"quota_slots"`
 	// QuotaWarnHeadroom: warn when account-wide remaining subscription slots
 	// drop below this (three focused US symbols' worth). Poll cadence is a
 	// code constant (see internal/quota).
 	QuotaWarnHeadroom int `toml:"quota_warn_headroom"`
-	// HistQuotaWarnRemain: warn when 30-day historical K-line slots remaining
+	// HistQuotaWarnRemain: warn when rolling seven-day historical K-line slots remaining
 	// drop below this.
 	HistQuotaWarnRemain int `toml:"hist_quota_warn_remain"`
 }
@@ -228,7 +229,7 @@ type Config struct {
 func Default() Config {
 	return Config{
 		OpenD: OpenD{Host: "127.0.0.1", Port: 11111},
-		Feed: Feed{ExtendedTime: true, UnsubHysteresisSecs: 300, QuotaSlots: 100,
+		Feed: Feed{ExtendedTime: true, UnsubHysteresisSecs: 300, QuotaSlots: 300,
 			QuotaWarnHeadroom: 12, HistQuotaWarnRemain: 10},
 		MD:    MD{TapeRing: 65536, SessionAnchor: "09:30"},
 		Store: Store{DBPath: "", RetentionDays: 30, FlushMs: 250},
