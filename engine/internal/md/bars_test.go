@@ -128,6 +128,136 @@ func TestMismatchEmitsOnDivergence(t *testing.T) {
 	}
 }
 
+func TestFinalizedAuth1mTrimsAEHL10sWick(t *testing.T) {
+	c, drain := runCore(t)
+	const symbol = "US.AEHL"
+	reported := func(seq, offMs int64, price float64, volume int64) feed.Tick {
+		got := tick(seq, offMs, price, volume, feed.Neutral)
+		got.Symbol = symbol
+		return got
+	}
+
+	// Captured 2026-08-31 minute: the highlighted 10s bar was
+	// O=6.19 H=6.88 L=6.1712 C=6.1912 V=1750, while OpenD's finalized
+	// K_1M range was [6.1305, 6.36] with the same minute volume.
+	c.Feed(feed.TicksEvent{Ticks: []feed.Tick{
+		reported(1, 1_000, 6.25, 3_395),
+		reported(2, 11_000, 6.201, 4_100),
+		reported(3, 21_000, 6.2025, 1_734),
+		reported(4, 31_000, 6.1695, 4_976),
+		reported(5, 40_000, 6.19, 500),
+		reported(6, 46_199, 6.88, 100),
+		reported(7, 46_835, 6.1712, 102),
+		reported(8, 49_000, 6.1912, 1_048),
+		reported(9, 51_000, 6.1971, 0),
+		reported(10, 59_000, 6.2388, 1_164),
+		reported(11, 61_000, 6.24, 1),
+	}})
+	c.Feed(feed.Bars1mEvent{Bars: []feed.Bar{{
+		Symbol: symbol, BucketMs: t0Ms,
+		O: 6.22, H: 6.36, L: 6.1305, C: 6.2388, Volume: 17_119,
+	}}})
+	c.Feed(feed.Bars1mEvent{Bars: []feed.Bar{{
+		Symbol: symbol, BucketMs: t0Ms + 60_000,
+		O: 6.24, H: 6.24, L: 6.24, C: 6.24, Volume: 1,
+	}}})
+
+	var got Bar
+	var mismatch bool
+	for _, u := range drain() {
+		switch u := u.(type) {
+		case BarUpdate:
+			if u.Bar.TF == session.TF10s && u.Bar.BucketMs == t0Ms+40_000 && !u.Bar.InProgress {
+				got = u.Bar
+			}
+		case MismatchUpdate:
+			mismatch = mismatch || u.Symbol == symbol && u.BucketMs == t0Ms
+		}
+	}
+	if got.O != 6.19 || got.H != 6.36 || got.L != 6.1712 || got.C != 6.1912 || got.V != 1_750 {
+		t.Fatalf("reconciled AEHL 10s bar = %+v", got)
+	}
+	if !mismatch {
+		t.Fatal("reconciled minute lost its mismatch diagnostic")
+	}
+}
+
+func TestFinalizedAuth1mTrimsPPCB10sLowerWick(t *testing.T) {
+	c, drain := runCore(t)
+	const symbol = "US.PPCB"
+	reported := func(seq, offMs int64, price float64, volume int64) feed.Tick {
+		got := tick(seq, offMs, price, volume, feed.Neutral)
+		got.Symbol = symbol
+		return got
+	}
+	c.Feed(feed.TicksEvent{Ticks: []feed.Tick{
+		reported(1, 10_000, 4.01, 100),
+		reported(2, 15_000, 3.60, 26),
+		reported(3, 19_000, 3.9501, 100),
+		reported(4, 21_000, 3.90, 100),
+		reported(5, 61_000, 3.85, 1),
+	}})
+	c.Feed(feed.Bars1mEvent{Bars: []feed.Bar{{
+		Symbol: symbol, BucketMs: t0Ms,
+		O: 4.0901, H: 4.13, L: 3.82, C: 3.85, Volume: 326,
+	}}})
+	c.Feed(feed.Bars1mEvent{Bars: []feed.Bar{{
+		Symbol: symbol, BucketMs: t0Ms + 60_000,
+		O: 3.85, H: 3.85, L: 3.85, C: 3.85, Volume: 1,
+	}}})
+
+	var got Bar
+	for _, u := range drain() {
+		if u, ok := u.(BarUpdate); ok && u.Bar.TF == session.TF10s &&
+			u.Bar.BucketMs == t0Ms+10_000 && !u.Bar.InProgress {
+			got = u.Bar
+		}
+	}
+	if got.O != 4.01 || got.H != 4.01 || got.L != 3.82 || got.C != 3.9501 || got.V != 226 {
+		t.Fatalf("reconciled PPCB 10s bar = %+v", got)
+	}
+}
+
+func TestSeedChartHistoryTrimsArchived10sWick(t *testing.T) {
+	c, drain := runCore(t)
+	const symbol = "US.AEHL"
+	c.SeedChartHistory(symbol, nil,
+		[]feed.Bar{{
+			Symbol: symbol, BucketMs: t0Ms,
+			O: 6.22, H: 6.36, L: 6.1305, C: 6.2388, Volume: 17_119,
+		}},
+		[]feed.Bar{{
+			Symbol: symbol, BucketMs: t0Ms + 40_000,
+			O: 6.19, H: 6.88, L: 6.1712, C: 6.1912, Volume: 1_750,
+		}},
+	)
+
+	bars := snapshotBars(drain(), symbol, session.TF10s)
+	if len(bars) != 1 || bars[0].H != 6.36 || bars[0].O != 6.19 || bars[0].C != 6.1912 || bars[0].V != 1_750 {
+		t.Fatalf("warm-start AEHL 10s bars = %+v", bars)
+	}
+}
+
+func TestSeedChartHistoryLeavesUnsafe10sRangeUnchanged(t *testing.T) {
+	c, drain := runCore(t)
+	const symbol = "US.AEHL"
+	c.SeedChartHistory(symbol, nil,
+		[]feed.Bar{{
+			Symbol: symbol, BucketMs: t0Ms,
+			O: 6.22, H: 6.36, L: 6.1305, C: 6.2388, Volume: 17_119,
+		}},
+		[]feed.Bar{{
+			Symbol: symbol, BucketMs: t0Ms + 40_000,
+			O: 6.50, H: 6.88, L: 6.1712, C: 6.1912, Volume: 1_750,
+		}},
+	)
+
+	bars := snapshotBars(drain(), symbol, session.TF10s)
+	if len(bars) != 1 || bars[0].H != 6.88 || bars[0].O != 6.50 {
+		t.Fatalf("unsafe warm-start 10s bar was altered: %+v", bars)
+	}
+}
+
 func TestEligibleTickShadowMismatchDoesNotMutateOfficialKLine(t *testing.T) {
 	c, drain := runCore(t)
 	// The odd lot contributes volume to the eligibility-correct shadow but

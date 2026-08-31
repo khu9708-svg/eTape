@@ -37,7 +37,8 @@ and the broker of your choice for execution, and everything else is free and ope
   High-frequency market data never touches React state.
 - **10-second candles, built live from raw ticks.** Sub-minute momentum most retail
   platforms simply can't show — bucketed by exchange timestamp with live buy/sell
-  direction, straight off the tick feed.
+  direction. Completed candle ranges reconcile safely to OpenD's finalized one-minute
+  envelope when its tick and K-line feeds disagree.
 - **A real Level 2 DOM ladder.** Full-depth order book rendered on canvas, fed by
   moomoo's tick-and-depth feed — not a 1-level quote widget.
 - **A clearly labelled local LULD aid.** During regular hours, supported symbols

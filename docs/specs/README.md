@@ -9,7 +9,7 @@ Current durable domain decisions:
 - Feed journal records normalized event flow; replay and synthetic feeds enter same market-data core.
 - Execution remains broker-agnostic above adapters, with global/per-venue gates and explicit venue arming.
 - Demo state must not poison persisted live workspace or symbols.
-- Exchange timestamps control bar buckets. Ticks create 10-second bars; one-minute K-lines feed larger intraday resolutions; daily history feeds daily/weekly/monthly.
+- Exchange timestamps control bar buckets. Ticks create live 10-second bars; finalized one-minute K-lines conservatively bound completed 10-second highs/lows when open and close remain valid, and feed larger intraday resolutions. Daily history feeds daily/weekly/monthly.
 - SQLite uses single-writer batching and WAL. Journal/archive failure is visible but must not stop live market flow.
 - Orders use stable client IDs and normalized lifecycle events. Ambiguous submit outcomes require reconciliation, never blind duplicate submission.
 - Watchlist membership is authoritative engine state; row snapshots may lag membership and render placeholders.

@@ -349,6 +349,9 @@ func (e *barEngine) seedHistory10s(c *Core, symbol string, bars []feed.Bar) {
 			Symbol: symbol, TF: session.TF10s, BucketMs: raw.BucketMs,
 			O: raw.O, H: raw.H, L: raw.L, C: raw.C, V: raw.Volume,
 		}
+		if auth := sb.series[session.TF1m].get(session.BucketStartMs(raw.BucketMs, session.TF1m)); auth != nil && !auth.InProgress {
+			nb, _ = trim10sBarToAuthRange(nb, *auth)
+		}
 		s10.upsert(nb)
 		e.seedAnchor(raw.Symbol, raw.C, 0, raw.BucketMs)
 	}
@@ -569,7 +572,8 @@ func foldBars(symbol string, tf session.Timeframe, bucket int64, members []Bar) 
 }
 
 // validate compares finalized authoritative vs shadow 1m for one bucket,
-// once. Divergence is an alarm (MismatchUpdate), never a blocker.
+// once. Divergence remains visible as a MismatchUpdate; impossible finalized
+// 10s ranges are trimmed to the authoritative minute when O/C remain valid.
 func (e *barEngine) validate(c *Core, sb *symbolBars, bucketMs int64) {
 	if c.seeding {
 		return
@@ -609,5 +613,26 @@ func (e *barEngine) validate(c *Core, sb *symbolBars, bucketMs int64) {
 	}
 	if len(details) > 0 {
 		c.emit(MismatchUpdate{Symbol: sb.symbol, BucketMs: bucketMs, Detail: strings.Join(details, "; ")})
+		e.trim10sToAuthRange(c, sb, *auth)
 	}
+}
+
+func (e *barEngine) trim10sToAuthRange(c *Core, sb *symbolBars, auth Bar) {
+	ten := sb.series[session.TF10s]
+	for _, original := range ten.rangeBars(auth.BucketMs, auth.BucketMs+60_000) {
+		if trimmed, changed := trim10sBarToAuthRange(original, auth); changed && ten.upsert(trimmed) {
+			c.barOut(trimmed)
+		}
+	}
+}
+
+func trim10sBarToAuthRange(original, auth Bar) (Bar, bool) {
+	if original.InProgress || original.O < auth.L || original.O > auth.H ||
+		original.C < auth.L || original.C > auth.H {
+		return original, false
+	}
+	trimmed := original
+	trimmed.H = math.Min(trimmed.H, auth.H)
+	trimmed.L = math.Max(trimmed.L, auth.L)
+	return trimmed, trimmed != original
 }
