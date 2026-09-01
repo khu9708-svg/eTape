@@ -6,6 +6,14 @@ const NEWS_WINDOW_HEIGHT = 800;
 
 let newsWindow: Window | null = null;
 
+function navigateNewsWindow(url: string): void {
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = NEWS_WINDOW_TARGET;
+  link.referrerPolicy = "no-referrer";
+  link.click();
+}
+
 /** Parse `?workspace=<id>`; default `main`; accepts catalog UUIDs. */
 export function parseWorkspaceName(search: string): string {
   const raw = new URLSearchParams(search).get("workspace");
@@ -47,7 +55,7 @@ export function openNewsWindow(url: string): Window | null {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
 
   if (newsWindow && !newsWindow.closed) {
-    newsWindow.location.href = url;
+    navigateNewsWindow(url);
     newsWindow.focus();
     return newsWindow;
   }
@@ -56,7 +64,7 @@ export function openNewsWindow(url: string): Window | null {
   const height = Math.min(NEWS_WINDOW_HEIGHT, Math.floor((window.screen.availHeight || NEWS_WINDOW_HEIGHT) * 0.8));
   const left = Math.round(window.screenX + (window.outerWidth - width) / 2);
   const top = Math.round(window.screenY + (window.outerHeight - height) / 2);
-  newsWindow = window.open(url, NEWS_WINDOW_TARGET, [
+  newsWindow = window.open("about:blank", NEWS_WINDOW_TARGET, [
     "popup=yes",
     `width=${width}`,
     `height=${height}`,
@@ -64,15 +72,17 @@ export function openNewsWindow(url: string): Window | null {
     `top=${top}`,
     "resizable=yes",
     "scrollbars=yes",
-    "noopener",
-    "noreferrer",
   ].join(","));
   try {
-    newsWindow?.resizeTo(width, height);
-    newsWindow?.moveTo(left, top);
+    if (newsWindow) {
+      newsWindow.opener = null;
+      newsWindow.resizeTo(width, height);
+      newsWindow.moveTo(left, top);
+    }
   } catch {
     // Browsers may reject window controls; the requested popup bounds still apply.
   }
+  if (newsWindow) navigateNewsWindow(url);
   newsWindow?.focus();
   return newsWindow;
 }

@@ -40,6 +40,10 @@ const detailPayload = (symbol: string, overrides: Partial<StockDetailPayload> = 
 });
 const detailSnap = (p: unknown) => ({ kind: "snapshot", topic: "stock.detail", payload: p } as SnapshotMsg);
 
+function mockNewsNavigationAnchor() {
+  return vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {});
+}
+
 let lastPopup: { closed: boolean } | undefined;
 afterEach(() => {
   if (lastPopup) lastPopup.closed = true;
@@ -95,9 +99,10 @@ describe("StockInfoPanel", () => {
 
   it("clicking a headline opens an unmaximized centered News Reader popup", () => {
     const { news, linkGroups } = renderPanel();
-    const popup = { closed: false, focus: vi.fn(), resizeTo: vi.fn(), moveTo: vi.fn(), location: { href: "" } };
+    const popup = { closed: false, opener: window, focus: vi.fn(), resizeTo: vi.fn(), moveTo: vi.fn(), location: { href: "" } };
     lastPopup = popup;
     const open = vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+    const click = mockNewsNavigationAnchor();
     Object.defineProperties(window, {
       screenX: { configurable: true, value: 100 },
       screenY: { configurable: true, value: 40 },
@@ -115,12 +120,18 @@ describe("StockInfoPanel", () => {
     });
     fireEvent.click(screen.getByText("H"));
     expect(open).toHaveBeenCalledWith(
-      "https://x/a",
+      "about:blank",
       "etape-news-reader",
-      "popup=yes,width=800,height=560,left=400,top=360,resizable=yes,scrollbars=yes,noopener,noreferrer",
+      "popup=yes,width=800,height=560,left=400,top=360,resizable=yes,scrollbars=yes",
     );
+    expect(popup.opener).toBeNull();
     expect(popup.resizeTo).toHaveBeenCalledWith(800, 560);
     expect(popup.moveTo).toHaveBeenCalledWith(400, 360);
+    const anchor = click.mock.instances[0] as HTMLAnchorElement;
+    expect(anchor.href).toBe("https://x/a");
+    expect(anchor.target).toBe("etape-news-reader");
+    expect(anchor.referrerPolicy).toBe("no-referrer");
+    expect(click).toHaveBeenCalled();
   });
 
   it("reuses and focuses the News Reader for another headline", () => {
@@ -128,6 +139,7 @@ describe("StockInfoPanel", () => {
     const popup = { closed: false, focus: vi.fn(), location: { href: "" } };
     lastPopup = popup;
     const open = vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+    const click = mockNewsNavigationAnchor();
     act(() => {
       news.apply({ kind: "snapshot", topic: "news.item", payload: [
         newsItem("US.AAPL", "https://x/a", "t1", { headline: "H1" }),
@@ -138,7 +150,11 @@ describe("StockInfoPanel", () => {
     fireEvent.click(screen.getByText("H1"));
     fireEvent.click(screen.getByText("H2"));
     expect(open).toHaveBeenCalledTimes(1);
-    expect(popup.location.href).toBe("https://x/b");
+    const anchor = click.mock.instances.at(-1) as HTMLAnchorElement;
+    expect(anchor.href).toBe("https://x/b");
+    expect(anchor.target).toBe("etape-news-reader");
+    expect(anchor.referrerPolicy).toBe("no-referrer");
+    expect(click).toHaveBeenCalledTimes(2);
     expect(popup.focus).toHaveBeenCalledTimes(2);
   });
 
@@ -150,6 +166,7 @@ describe("StockInfoPanel", () => {
     const open = vi.spyOn(window, "open")
       .mockReturnValueOnce(first as unknown as Window)
       .mockReturnValueOnce(second as unknown as Window);
+    const click = mockNewsNavigationAnchor();
     act(() => {
       news.apply({ kind: "snapshot", topic: "news.item", payload: [
         newsItem("US.AAPL", "https://x/a", "t1", { headline: "H1" }),
@@ -161,7 +178,10 @@ describe("StockInfoPanel", () => {
     first.closed = true;
     fireEvent.click(screen.getByText("H2"));
     expect(open).toHaveBeenCalledTimes(2);
-    expect(open.mock.calls[1][0]).toBe("https://x/b");
+    expect(open.mock.calls[1][0]).toBe("about:blank");
+    const anchor = click.mock.instances.at(-1) as HTMLAnchorElement;
+    expect(anchor.href).toBe("https://x/b");
+    expect(click).toHaveBeenCalledTimes(2);
   });
 
   it("rejects malformed and non-HTTP news URLs without opening a window", () => {

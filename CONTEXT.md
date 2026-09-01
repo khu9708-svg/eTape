@@ -62,7 +62,7 @@ A source story displayed by a Stock Info Panel. Equivalent wire stories from mir
 _Avoid_: News row, duplicate news
 
 **News Reader**:
-A reusable, resizable browser popup for viewing a News Article. It opens below full-screen size.
+A reusable, resizable browser popup for viewing a News Article. A newly created News Reader opens below full-screen size; while it remains open, subsequent News Articles preserve its user-selected size and window state.
 _Avoid_: News window, article window
 
 **Operating Country**:
