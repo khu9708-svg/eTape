@@ -22,7 +22,7 @@ function newsMeta(item: { published_at: string; published_precision: string; see
     return { label: "time unavailable", detail: `seen ${formatTapeTime(item.seen_at)}`, today: false };
   }
   const date = newsDateLabel(item.published_at, nowMs);
-  return { label: date.label, detail: item.published_precision === "date" ? "" : formatTapeTime(item.published_at), today: date.today };
+  return { label: date.label, detail: item.published_precision === "date" ? `seen ${formatTapeTime(item.seen_at)}` : formatTapeTime(item.published_at), today: date.today };
 }
 
 /** Bracket-style mono news-type tag — the ledger/tape vocabulary stand-in for a colored pill badge.

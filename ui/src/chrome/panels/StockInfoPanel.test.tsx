@@ -489,6 +489,27 @@ describe("StockInfoPanel news list enhancements", () => {
     expect(screen.getByText(/09:30:05/)).toBeTruthy();
   });
 
+  it("shows first-seen time for a date-only publication timestamp", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 7, 12, 0, 0));
+    try {
+      const { news, linkGroups } = renderPanel();
+      act(() => {
+        news.apply({ kind: "snapshot", topic: "news.item", payload: [
+          newsItem("US.AAPL", "u1", "2026-07-07T13:42:54Z", {
+            published_at: new Date(2026, 6, 7).toISOString(),
+            published_precision: "date",
+          }),
+        ] });
+        linkGroups.focus("green", "US.AAPL");
+      });
+      expect(screen.getByText("today")).toBeTruthy();
+      expect(screen.getByText(/seen 09:42:54/)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("renders a bracket-style type badge per item, defaulting an unrecognized type to [NEWS]", () => {
     const { news, linkGroups } = renderPanel();
     act(() => {
