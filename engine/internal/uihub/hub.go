@@ -165,6 +165,7 @@ type Hub struct {
 	pubCh              chan pub
 	dropCh             chan dropReport     // conn goroutines -> Run: write-timeout drop reports
 	backfillDoneCh     chan backfillResult // backfill goroutines -> Run: daily-fetch outcome
+	historyWiredCh     chan struct{}       // boot goroutine -> Run: replay demands after history wiring
 	syncCh             chan chan struct{}  // test barrier
 	closed             chan struct{}       // closed when Run returns; unblocks stuck senders
 
@@ -190,6 +191,7 @@ type Hub struct {
 	warmed          map[string]bool                  // symbol -> archive warm succeeded
 	warmInflight    map[string]bool                  // symbol -> archive warm currently running
 	prepareInflight map[string]bool                  // symbol -> focused preparation currently running
+	historyWired    bool                             // history roles have been explicitly installed or disabled
 	pendKeep        map[string]staged                // classMDKeep, flushed on md ticker
 	tapePend        map[string][]wsmsg.Tick          // symbol -> accumulated ticks
 	acctPend        map[string]staged                // venue -> latest account frame
@@ -224,6 +226,7 @@ func NewHub(clk clock.Clock, cfg HubConfig, m *mirror) *Hub {
 		pubCh:              make(chan pub, cfg.Buf),
 		dropCh:             make(chan dropReport, cfg.Buf),
 		backfillDoneCh:     make(chan backfillResult, cfg.Buf),
+		historyWiredCh:     make(chan struct{}, 1),
 		syncCh:             make(chan chan struct{}),
 		closed:             make(chan struct{}),
 		clients:            map[client]map[wsmsg.Topic]bool{},
@@ -354,32 +357,28 @@ func (h *Hub) feed() Feed {
 	return nil
 }
 
-// SetBackfill injects the deep-history backfill trigger (spawns an
-// orch.Backfill goroutine for a symbol, reporting its daily-fetch outcome via
-// done) after the hub is running. Safe to call once from boot; nil until then
-// (replay/tests/backfill-disabled never call it, in which case chart-open
-// demands simply skip the deep backfill).
+// SetBackfill injects one worker for both focused preparation and archive
+// warming. Demands received before this boot-time configuration are replayed.
 func (h *Hub) SetBackfill(fn func(sym string, done func(ok bool))) {
-	if fn == nil {
-		h.backfillSlot.Store(nil)
-		return
-	}
-	h.backfillSlot.Store(&backfillBox{
-		prepare: fn,
-		warm:    fn,
-	})
+	h.SetHistoryWarm(fn, fn)
 }
 
 // SetHistoryWarm installs explicit focused preparation and archive-only roles.
+// Passing nil roles explicitly enables the no-history chart-ready path.
 func (h *Hub) SetHistoryWarm(
 	prepare func(sym string, done func(ok bool)),
 	warm func(sym string, done func(ok bool)),
 ) {
 	if prepare == nil && warm == nil {
 		h.backfillSlot.Store(nil)
-		return
+	} else {
+		h.backfillSlot.Store(&backfillBox{prepare: prepare, warm: warm})
 	}
-	h.backfillSlot.Store(&backfillBox{prepare: prepare, warm: warm})
+	select {
+	case h.historyWiredCh <- struct{}{}:
+	case <-h.closed:
+	default:
+	}
 }
 
 // SetCachedDaily injects chart-only, memory-only daily cache seeding.
@@ -584,6 +583,8 @@ func (h *Hub) Run(ctx context.Context) error {
 			h.handleDrop(r)
 		case r := <-h.backfillDoneCh:
 			h.handleBackfillDone(r)
+		case <-h.historyWiredCh:
+			h.handleHistoryWired()
 		case <-mdTick.C():
 			for _, s := range h.m.advanceSignificance(h.clk.Now()) {
 				h.stageMD(s)
@@ -644,6 +645,8 @@ func (h *Hub) drain() {
 			h.handleDrop(r)
 		case r := <-h.backfillDoneCh:
 			h.handleBackfillDone(r)
+		case <-h.historyWiredCh:
+			h.handleHistoryWired()
 		default:
 			return
 		}
@@ -706,6 +709,9 @@ func (h *Hub) handleEnsureDemand(r ensureDemandReq) {
 
 // triggerBackfill dispatches an explicit focused or archive-only worker.
 func (h *Hub) triggerBackfill(sym string, wantsHistory, focused bool) {
+	if !h.historyWired {
+		return
+	}
 	worker := h.backfill()
 	if focused {
 		if worker == nil || worker.prepare == nil {
@@ -726,6 +732,24 @@ func (h *Hub) triggerBackfill(sym string, wantsHistory, focused bool) {
 	}
 	h.warmInflight[sym] = true
 	worker.warm(sym, func(ok bool) { h.reportBackfill(sym, false, ok) })
+}
+
+func (h *Hub) handleHistoryWired() {
+	h.historyWired = true
+	for sym, target := range h.historyTargets() {
+		h.triggerBackfill(sym, target.wantsHistory, target.focused)
+	}
+}
+
+func (h *Hub) historyTargets() map[string]demandInfo {
+	targets := map[string]demandInfo{}
+	h.forEachDemand(func(info demandInfo) {
+		current := targets[info.symbol]
+		if info.focused || (!current.focused && info.wantsHistory) {
+			targets[info.symbol] = info
+		}
+	})
+	return targets
 }
 
 func (h *Hub) handleChartWindow(r chartWindowReq) {
@@ -807,17 +831,10 @@ func (h *Hub) forEachDemand(fn func(demandInfo)) {
 //
 // Focused demands win over archive-only watch demands for a shared symbol.
 func (h *Hub) rearmBackfill() {
-	if h.backfill() == nil {
+	if !h.historyWired || h.backfill() == nil {
 		return // no backfill trigger injected (replay / backfill disabled)
 	}
-	targets := map[string]demandInfo{}
-	h.forEachDemand(func(info demandInfo) {
-		current := targets[info.symbol]
-		if info.focused || (!current.focused && info.wantsHistory) {
-			targets[info.symbol] = info
-		}
-	})
-	for sym, target := range targets {
+	for sym, target := range h.historyTargets() {
 		h.triggerBackfill(sym, target.wantsHistory, target.focused)
 	}
 }

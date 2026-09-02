@@ -260,6 +260,7 @@ func TestHubDemand_NilBackfillNoPanic(t *testing.T) {
 func TestHubDemand_FocusedWithoutBackfillEmitsChartReady(t *testing.T) {
 	h, cancel := runHub(t)
 	defer cancel()
+	h.SetHistoryWarm(nil, nil)
 	c := &fakeClient{nid: 9}
 	h.Register(c)
 	h.EnsureDemand(9, feed.ChartDemand("chart", "US.AAPL"))
@@ -271,6 +272,26 @@ func TestHubDemand_FocusedWithoutBackfillEmitsChartReady(t *testing.T) {
 	events, ok := frames[0].Payload.([]wsmsg.SysEvent)
 	if !ok || len(events) != 1 || events[0].Kind != "chart-ready" || events[0].Detail != "US.AAPL" {
 		t.Fatalf("event=%+v, want chart-ready US.AAPL", frames[0].Payload)
+	}
+}
+
+func TestHubDemand_FocusedBeforeHistoryConfiguredWaitsAndReplays(t *testing.T) {
+	h, cancel := runHub(t)
+	defer cancel()
+	c := &fakeClient{nid: 10}
+	h.Register(c)
+	h.EnsureDemand(c.nid, feed.ChartDemand("chart", "US.AAPL"))
+	h.sync()
+	frames := h.m.snapshotFrames(wsmsg.TopicSysEvents)
+	if events, _ := frames[0].Payload.([]wsmsg.SysEvent); len(events) != 0 {
+		t.Fatalf("sys.events before history configuration = %v, want none", events)
+	}
+
+	bf := &spyBackfill{}
+	h.SetHistoryWarm(bf.trigger, nil)
+	h.sync()
+	if got := bf.snapshot(); !reflect.DeepEqual(got, []string{"US.AAPL"}) {
+		t.Fatalf("replayed focused demands = %v, want [US.AAPL]", got)
 	}
 }
 
