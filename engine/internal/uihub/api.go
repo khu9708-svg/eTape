@@ -55,6 +55,7 @@ type GlobalLimits struct {
 type VenueMeta struct {
 	ID     string
 	Broker string
+	Env    string
 	Note   string
 	Gate   GateLimits
 }
@@ -69,6 +70,7 @@ type Config struct {
 	OutBuf                         int
 	DistDir                        string
 	Demo                           bool
+	AccountDemand                  *exec.AccountDemandRegistry
 	OnConfigSet                    func(key, value string)
 }
 
@@ -76,7 +78,7 @@ func New(clk clock.Clock, cfg Config, ex ExecCore, st Stores, ind Indicators, va
 	vms := make([]venueMeta, 0, len(cfg.Venues))
 	for _, v := range cfg.Venues {
 		vms = append(vms, venueMeta{
-			ID:     v.ID,
+			ID: v.ID, Env: v.Env,
 			Broker: wsmsg.Broker(v.Broker),
 			Note:   v.Note,
 			Gate: wsmsg.GateLimitsView{
@@ -102,6 +104,7 @@ func New(clk clock.Clock, cfg Config, ex ExecCore, st Stores, ind Indicators, va
 		locateRegistry = locateRegistries[0]
 	}
 	cmd := newCommands(ex, st, h, h, va, h.feed, vt, locateRegistry)
+	cmd.setAccountDemandRegistry(cfg.AccountDemand)
 	cmd.onConfigSet = cfg.OnConfigSet
 	h.cmd = cmd
 	cmd.restart = requestRestart

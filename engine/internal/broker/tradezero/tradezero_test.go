@@ -388,8 +388,8 @@ func TestAdapter_Capabilities_And_FlattenUnsupported(t *testing.T) {
 		t.Fatal(err)
 	}
 	caps := a.Capabilities()
-	if caps.NativeReplace || caps.FlattenAll || caps.OvernightSession || caps.ResetBalance {
-		t.Fatalf("capabilities = %+v, want all false", caps)
+	if caps.NativeReplace || caps.FlattenAll || caps.OvernightSession || caps.ResetBalance || !caps.AuthoritativeDayPnL {
+		t.Fatalf("capabilities = %+v, want only authoritative DayPnL true", caps)
 	}
 	if err := a.Flatten(context.Background()); err == nil {
 		t.Fatal("Flatten must return an unsupported error (Capabilities.FlattenAll is false)")

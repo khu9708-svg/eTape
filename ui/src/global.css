@@ -176,9 +176,9 @@ input.numfield { -moz-appearance: textfield; appearance: textfield; }
    this shell ever carries. */
 .broker-card-live { border-top: 3px solid var(--danger); }
 .broker-card-ok { border-top: 3px solid var(--accent); }
-/* moomoo's persistent DayPnL caveat — deliberately neither bronze nor red (a
-   caveat, not a state or a live signal); dashed border marks it as distinct
-   from every other bordered surface in this form. Never a tooltip. */
+/* Account P&L note — deliberately neither bronze nor red (a note, not a state
+   or a live signal); dashed border marks it as distinct from every other
+   bordered surface in this form. Never a tooltip. */
 .broker-card-caveat { border: 1px dashed var(--border-strong); color: var(--text-muted); font-size: 10.5px; padding: 6px 8px; border-radius: 4px; }
 
 /* First-run venue-setup prompt (Task 3, venues/creds redesign) — fade-in only,

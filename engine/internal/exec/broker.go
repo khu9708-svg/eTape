@@ -14,8 +14,11 @@ type Capabilities struct {
 	// account projection; other venues continue using eTape's local cycle
 	// projection.
 	AuthoritativeDayPnL bool
-	// DayLossActiveVenueOnly excludes this venue's DayPnL from MaxDayLoss when
-	// it is not the runtime active venue.
+	// CalculatedDayPnL marks a venue whose account-wide day P&L is calculated
+	// from a persisted trading-close baseline (currently moomoo).
+	CalculatedDayPnL bool
+	// DayLossActiveVenueOnly is retained for config/fixture compatibility; the
+	// global gate now always aggregates eligible live venues.
 	DayLossActiveVenueOnly bool
 }
 
@@ -67,15 +70,24 @@ type BrokerConnDown struct {
 	Note string
 }
 type BrokerAccount struct{ Account AccountSnapshot }
+
+// BrokerAccountFresh reports whether the account poller has a recent enough
+// snapshot for this venue. It is separate from BrokerAccount so a failed poll
+// can trip the global stale-data safety gate without fabricating a balance.
+type BrokerAccountFresh struct {
+	V     VenueID
+	Fresh bool
+}
 type BrokerPositions struct {
 	V         VenueID
 	Positions []Position
 }
 
-func (BrokerConnUp) isBrokerEvent()    {}
-func (BrokerConnDown) isBrokerEvent()  {}
-func (BrokerAccount) isBrokerEvent()   {}
-func (BrokerPositions) isBrokerEvent() {}
+func (BrokerConnUp) isBrokerEvent()       {}
+func (BrokerConnDown) isBrokerEvent()     {}
+func (BrokerAccount) isBrokerEvent()      {}
+func (BrokerAccountFresh) isBrokerEvent() {}
+func (BrokerPositions) isBrokerEvent()    {}
 
 // Mark is a last-trade price the gate values market orders against and the Core
 // marks positions with. Its shape matches md.Mark; Plan 6 bridges the two.

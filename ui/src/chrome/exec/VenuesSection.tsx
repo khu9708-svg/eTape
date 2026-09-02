@@ -872,7 +872,7 @@ function MoomooCard({
               <div style={{ ...{ color: palette.danger, fontSize: 10 } }}>{runningStatus.note}</div>
             )}
             <div className="broker-card-caveat" data-testid="moomoo-caveat">
-              Day P&amp;L unavailable — the max-day-loss breaker does not see moomoo losses.
+              Day P&amp;L is calculated from close-to-close equity and signed cash flows. Live moomoo losses are included in the max-day-loss breaker.
             </div>
             {rowKey && (
               <RiskLimits caps={caps} expanded={limitsExpanded} onToggle={onToggleLimits} onUpdateCap={onUpdateCap}

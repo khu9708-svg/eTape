@@ -26,6 +26,7 @@ import (
 	"github.com/earlisreal/eTape/engine/internal/feed/opend"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/common"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdcommon"
+	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdflowsummary"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdgetacclist"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdgetfunds"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdgetorderlist"
@@ -369,6 +370,44 @@ func (tc *trdClient) getFunds(ctx context.Context) (*trdcommon.Funds, error) {
 	return funds, nil
 }
 
+// getCashFlow returns the signed cash movements for one ET clearing date.
+// OpenD reports direction separately from amount, so normalize both directions
+// to a signed net amount (+deposit, -withdrawal) at this boundary.
+func (tc *trdClient) getCashFlow(ctx context.Context, clearingDate string) (float64, error) {
+	req := &trdflowsummary.Request{C2S: &trdflowsummary.C2S{
+		Header: trdHeader(tc.accID, tc.env), ClearingDate: proto.String(clearingDate),
+	}}
+	fr, err := tc.c.Request(ctx, opend.ProtoTrdFlowSummary, req)
+	if err != nil {
+		return 0, fmt.Errorf("moomoo: get cash flow transport: %w", err)
+	}
+	var resp trdflowsummary.Response
+	if err := proto.Unmarshal(fr.Body, &resp); err != nil {
+		return 0, fmt.Errorf("moomoo: decode cash flow response: %w", err)
+	}
+	if !retOK(resp.GetRetType()) {
+		return 0, retErr("get cash flow", resp.GetRetType(), resp.GetRetMsg())
+	}
+	return netCashFlow(resp.GetS2C().GetFlowSummaryInfoList()), nil
+}
+
+func netCashFlow(flows []*trdflowsummary.FlowSummaryInfo) float64 {
+	var total float64
+	for _, flow := range flows {
+		amount := flow.GetCashFlowAmount()
+		if amount < 0 {
+			amount = -amount
+		}
+		switch trdflowsummary.TrdCashFlowDirection(flow.GetCashFlowDirection()) {
+		case trdflowsummary.TrdCashFlowDirection_TrdCashFlowDirection_In:
+			total += amount
+		case trdflowsummary.TrdCashFlowDirection_TrdCashFlowDirection_Out:
+			total -= amount
+		}
+	}
+	return total
+}
+
 func (tc *trdClient) getPositionList(ctx context.Context) ([]*trdcommon.Position, error) {
 	req := &trdgetpositionlist.Request{C2S: &trdgetpositionlist.C2S{Header: trdHeader(tc.accID, tc.env)}}
 	fr, err := tc.c.Request(ctx, opend.ProtoTrdGetPositionList, req)
@@ -511,23 +550,10 @@ func orderDomain(o *trdcommon.Order) exec.Order {
 // snapshot composes getFunds + getPositionList + getOrderList(refreshCache=
 // true -- a full reconcile always wants fresh data, mirroring Alpaca's own
 // snapshot) into the broker-agnostic (AccountSnapshot, []Position, []Order)
-// shape. DayPnL, SodEquity, and Leverage are deliberately left at zero value:
-// moomoo's Funds message has no day-P&L field and no field that clearly
-// corresponds to the other two -- a later architectural decision (out of
-// this task's scope) decides how moomoo's day-loss gets computed from
-// eTape's own ledger instead, rather than this function guessing/fabricating
-// a mapping.
-//
-// IMPORTANT -- MaxDayLoss circuit breaker gap: because AccountSnapshot.DayPnL
-// is always 0 here (Trd_GetFunds has no day-P&L field, and no ledger-derived
-// alternative has been built), exec.Core's global MaxDayLoss circuit breaker
-// (gate.go's BreachedDayLoss, which sums every venue's DayPnL via state.go)
-// does NOT see moomoo's contribution to the day's aggregate loss. Do NOT
-// live-arm a moomoo venue as your PRIMARY or ONLY venue without either
-// (a) building a ledger-derived day-loss computation for moomoo, or
-// (b) explicitly accepting that MaxDayLoss provides no protection for
-// moomoo-originated losses. See docs/2026-07-04-moomoo-trading-api.md's
-// status section for the tracked, unresolved state of this gap.
+// shape. DayPnL and SodEquity are intentionally left to the engine-wide
+// account poller: it combines PollAccount's funds/flow view with the persisted
+// trading-close baseline. Full reconcile still needs the current balance and
+// positions, so it must not guess a day P&L from this snapshot alone.
 //
 // AvgPrice uses AverageCostPrice per
 // docs/2026-07-04-moomoo-trading-api.md's guidance (never CostPrice/

@@ -54,7 +54,8 @@ and the broker of your choice for execution, and everything else is free and ope
   shows the linked symbol and resolved venue.
 - **Safety-gated by default.** Zero venues are configured out of the box. Every order
   must pass a two-layer risk gate (global caps + per-venue caps: max day loss, order
-  value, position size, open orders), and each venue has an explicit arm/disarm switch.
+  value, position size, open orders), and the eTape master execution switch must be
+  explicitly armed.
 - **A live demo that actually feels live.** No account, no setup: a synthetic market
   with a warm year of history, a breathing DOM, and a moving scanner board,
   streaming indefinitely — not a 20-minute canned replay. The universe (which
@@ -212,7 +213,7 @@ Notes:
 | **Built-in simulator** (`sim`) | paper | ✅ Realistic fills: book-walk pricing, partials, slippage & latency models |
 | **Alpaca** | paper + live | ✅ Fully supported (REST + streaming) |
 | **TradeZero** | live | ✅ Fully supported (REST + WebSocket) |
-| **moomoo** | live only | ✅ Fully supported (native OpenD trade connection) |
+| **moomoo** | paper + live | ✅ Fully supported (native OpenD trade connection) |
 
 Execution is **off by default** — with no venues configured, every order is blocked.
 The easiest way to add one is in-app: **Settings → Venues** lets you add a venue,
@@ -227,8 +228,9 @@ account ID, and trade unlock happens once per OpenD restart in the OpenD GUI its
 
 Before any order reaches a broker it must pass the **two-layer risk gate** — global
 caps (max day loss, per-symbol position value/shares) and per-venue caps (max order
-value, position size, open orders) — and the venue must be explicitly **armed** in
-the UI. Live venues trade real money; configure them deliberately.
+value, position size, open orders) — and the eTape master execution switch must be
+explicitly **armed** in the UI. Live venues trade real money; configure them
+deliberately. Moomoo's separate trade-password unlock remains managed in OpenD.
 
 ### Setting up Alpaca
 
@@ -245,8 +247,9 @@ keys for deep chart history.
 3. **Add the venue in eTape**: **Settings → Venues → Add venue**, pick broker
    **Alpaca**, paste the Key ID and Secret Key, and hit **Test connection** — eTape
    verifies the keys and auto-detects the environment (paper/live) before saving.
-4. **Arm the venue** in the UI when you're ready to send orders; until then the
-   gate blocks everything.
+4. **Arm the eTape master switch** in the UI when you're ready to send orders; until
+   then the gate blocks everything. OpenD's separate trade unlock is still managed
+   in OpenD.
 
 As a bonus, once a paper Alpaca venue is configured the engine automatically reuses
 its keys (read-only) for historical chart data — full daily history plus deep

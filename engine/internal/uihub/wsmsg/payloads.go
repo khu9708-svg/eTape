@@ -168,17 +168,19 @@ type PositionRow struct {
 }
 
 type AccountRow struct {
-	Venue         string  `json:"venue"`
-	Equity        float64 `json:"equity"`
-	BuyingPower   float64 `json:"buyingPower"`
-	AvailableCash float64 `json:"availableCash"`
-	SodEquity     float64 `json:"sodEquity"`
-	Realized      float64 `json:"realized"`
-	DayPnl        float64 `json:"dayPnl"`
-	Leverage      float64 `json:"leverage"`
-	TsMs          int64   `json:"tsMs"`
-	CycleStartMs  int64   `json:"cycleStartMs"`
-	CycleRealized float64 `json:"cycleRealized"`
+	Venue             string  `json:"venue"`
+	Equity            float64 `json:"equity"`
+	BuyingPower       float64 `json:"buyingPower"`
+	AvailableCash     float64 `json:"availableCash"`
+	SodEquity         float64 `json:"sodEquity"`
+	Realized          float64 `json:"realized"`
+	DayPnl            float64 `json:"dayPnl"`
+	DayPnlSource      string  `json:"dayPnlSource,omitempty"`
+	DayPnlProvisional bool    `json:"dayPnlProvisional,omitempty"`
+	Leverage          float64 `json:"leverage"`
+	TsMs              int64   `json:"tsMs"`
+	CycleStartMs      int64   `json:"cycleStartMs"`
+	CycleRealized     float64 `json:"cycleRealized"`
 }
 
 type GateLimitsView struct {
@@ -197,6 +199,7 @@ type GlobalLimitsView struct {
 type VenueStatus struct {
 	Venue            string         `json:"venue"`
 	Broker           Broker         `json:"broker"`
+	Env              string         `json:"env,omitempty"`
 	Connected        bool           `json:"connected"`
 	ReconcilePending bool           `json:"reconcilePending"`
 	Note             string         `json:"note"`
@@ -562,6 +565,11 @@ type SetConfigArgs struct {
 
 type DeleteConfigArgs struct {
 	Key string `json:"key"`
+}
+
+type SetAccountDemandArgs struct {
+	PanelID string `json:"panelId"`
+	Venue   string `json:"venue"`
 }
 
 type SetScannerFiltersArgs struct {

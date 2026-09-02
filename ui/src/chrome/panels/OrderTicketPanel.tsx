@@ -7,7 +7,7 @@ import type { Side, OrderType, TIF, OrderSession, SubmitOrderArgs } from "../../
 import { useTheme } from "../ThemeProvider";
 import { useToasts } from "../Toast";
 import { useOrderCommands } from "../exec/useOrderCommands";
-import { useVenueSelection } from "../exec/venueSelection";
+import { requiresLiveConfirmation, useVenueSelection } from "../exec/venueSelection";
 import { useOrderConfig } from "../exec/useOrderConfig";
 import { useThrottledQuote } from "../exec/useThrottledQuote";
 import { resolveShares, type SizingMode } from "../exec/sizing";
@@ -52,7 +52,7 @@ export function OrderTicketPanel({ config, stores, commands, linkGroups, group: 
   // trader's eyes are on the ticket while placing an order.
   const sessionMode = useSyncExternalStore((cb) => stores.session.subscribe(cb), () => stores.session.getSnapshot());
 
-  const group = groupProp ?? config.group;
+  const group = groupProp === undefined ? config.group : groupProp;
   const configuredSymbol = typeof config.settings.symbol === "string" ? config.settings.symbol : undefined;
   const [symbol, setSymbol] = useState<string>(() => symbolProp ?? linkGroups.symbolFor(group) ?? configuredSymbol ?? "");
   useEffect(() => {
@@ -63,9 +63,12 @@ export function OrderTicketPanel({ config, stores, commands, linkGroups, group: 
 
   const quote = useThrottledQuote(stores.quote, symbol);
   const { venue, venues, selectVenue } = useVenueSelection(group, linkGroups, stores);
+  const status = stores.exec.status();
   const { config: orderConfig } = useOrderConfig();
   const extBufferPct = orderConfig.extHoursMarketBufferPct ?? 1;
   const hasDeck = resolveDeckRows(orderConfig).length > 0;
+  const previousVenue = linkGroups.previousVenueFor(group);
+  const oldOrders = previousVenue ? stores.exec.orders().filter((o) => o.order.venue === previousVenue && (o.optimistic || o.order.status === "SUBMITTED" || o.order.status === "ACCEPTED" || o.order.status === "PARTIALLY_FILLED")).length : 0;
 
   const [type, setType] = useState<OrderType>("LIMIT");
   const [tif, setTif] = useState<TIF>("DAY");
@@ -155,7 +158,12 @@ export function OrderTicketPanel({ config, stores, commands, linkGroups, group: 
           ···
         </span>
       )}
-      <select data-testid="venue" className="ctl mono" value={venue} onChange={(e) => selectVenue(e.target.value)}>
+      <select data-testid="venue" className="ctl mono" value={venue} disabled={group === null} onChange={(e) => {
+        const next = e.target.value;
+        if (requiresLiveConfirmation(status, venue, next) && !window.confirm("Switch this Link Group from paper to live trading?")) return;
+        selectVenue(next);
+      }}>
+        {group === null && <option value="">Choose a Link Group</option>}
         {venues.map((v) => <option key={v} value={v}>{v}</option>)}
       </select>
       <button type="button" data-testid="open-settings" aria-label="order settings"
@@ -169,6 +177,7 @@ export function OrderTicketPanel({ config, stores, commands, linkGroups, group: 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: 6, height: "100%", background: palette.surface, color: palette.text, fontSize: 12, overflow: "auto" }}>
       {actionsSlot === undefined ? headerActions : actionsSlot ? createPortal(headerActions, actionsSlot) : null}
+      {oldOrders > 0 && <div data-testid="venue-switch-warning" style={{ color: palette.warn, fontSize: 11 }}>Working orders remain on {previousVenue} ({oldOrders}).</div>}
       {/* Strip 1 — header blotter line: bid/ask (symbol now lives in PanelFrame's
           own ledger-header title bar — symbolBearing: true in registry.tsx). */}
       <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>

@@ -1,6 +1,15 @@
 # Execution UI
 
-Order ticket, hotkeys, sizing, venue selection, and arm/disarm presentation. Inputs: user intent plus account/position stores; outputs: typed wire commands. UI never bypasses engine gates. Test: `npm test -- exec`.
+Order ticket, hotkeys, sizing, venue selection, and arm/disarm presentation.
+Inputs: user intent plus account/position stores; outputs: typed wire commands.
+UI never bypasses engine gates. Grouped panels resolve only their Link Group's
+persisted venue; pinned panels prompt for a Link Group and cannot submit. A
+paper-to-live group switch asks for confirmation, while existing orders remain
+owned by their original venue and are called out until they finish. Account
+panels publish panel-scoped account demand so the engine polls only displayed
+paper accounts in addition to its live risk venues. The Account strip exposes
+the single broker/calculated Day P&L, eTape cycle Realized P&L, source label,
+and stale timestamp. Test: `npm test -- exec`.
 
 Dollar, Cash %, Buying Power %, Shares, and Position sizing use the selected
 venue's live account and position data; Cash % uses the same available cash

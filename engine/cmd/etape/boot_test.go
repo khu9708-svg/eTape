@@ -48,8 +48,8 @@ func TestResolveActiveVenueUsesPersistedRunningVenue(t *testing.T) {
 // TestBuildBrokersMoomooConstructsAdapter verifies a moomoo venue with a
 // valid numeric account_id builds a real *moomoo.Adapter with Run bound —
 // the stub venue (reject-all, no Run) this replaces is gone; moomoo is no
-// longer deferred to v1.x. Env is "live" — moomoo is a live-only venue now
-// (see TestBuildBrokersMoomooPaperEnvErrors).
+// longer deferred to v1.x. Env is "live"; paper uses the same adapter with a
+// simulated OpenD trade environment.
 func TestBuildBrokersMoomooConstructsAdapter(t *testing.T) {
 	cfg := config.Config{
 		OpenD:  config.OpenD{Host: "127.0.0.1", Port: 11111},
@@ -74,8 +74,7 @@ func TestBuildBrokersMoomooConstructsAdapter(t *testing.T) {
 // defensively re-validates account_id at boot time (ValidateVenueConfig
 // already rejects a non-numeric account_id when the settings UI writes
 // config.toml, but a hand-edited file can skip that path entirely). Env is
-// "live" so this exercises the account_id check specifically, not the
-// live-only env check covered by TestBuildBrokersMoomooPaperEnvErrors.
+// "live" so this exercises the account_id check specifically.
 func TestBuildBrokersMoomooNonNumericAccountIDErrors(t *testing.T) {
 	cfg := config.Config{Venues: []config.Venue{{ID: "moomoo", Broker: "moomoo", AccountID: "not-a-number", Env: "live"}}}
 	vbs, err := buildBrokers(cfg, creds.File{}, clock.System{})
@@ -87,23 +86,16 @@ func TestBuildBrokersMoomooNonNumericAccountIDErrors(t *testing.T) {
 	}
 }
 
-// TestBuildBrokersMoomooPaperEnvErrors verifies buildBrokers fails loud on a
-// hand-edited config.toml with a moomoo venue set to env = "paper" instead of
-// silently relying on the moomoo adapter's own defense-in-depth
-// simulate-default (env != "live" => TrdEnv_Simulate) — boot does not run
-// configs through ValidateVenueConfig, so this is the only guard for that
-// path. A real-money broker's env must never be silently coerced.
-func TestBuildBrokersMoomooPaperEnvErrors(t *testing.T) {
+// TestBuildBrokersMoomooPaperEnvSupportsPaper verifies paper Moomoo accounts
+// build successfully and retain their configured environment.
+func TestBuildBrokersMoomooPaperEnvSupportsPaper(t *testing.T) {
 	cfg := config.Config{Venues: []config.Venue{{ID: "moomoo", Broker: "moomoo", AccountID: "123456", Env: "paper"}}}
 	vbs, err := buildBrokers(cfg, creds.File{}, clock.System{})
-	if err == nil {
-		t.Fatal("expected error for moomoo venue with env: paper")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "live-only") {
-		t.Fatalf("expected live-only error, got: %v", err)
-	}
-	if len(vbs) != 0 {
-		t.Fatalf("expected empty broker slice on error, got %d", len(vbs))
+	if len(vbs) != 1 || vbs[0].Env != "paper" {
+		t.Fatalf("expected one paper moomoo venue, got %+v", vbs)
 	}
 }
 
@@ -497,52 +489,5 @@ func TestResolveBackfillAlpacaCredsErrorsWhenNothingResolves(t *testing.T) {
 	cfg := config.Config{Venues: []config.Venue{{ID: "tz", Broker: "tradezero", Credentials: "tz_creds"}}}
 	if _, _, err := resolveBackfillAlpacaCreds(cfg, creds.File{}); err == nil {
 		t.Fatal("expected an error when nothing resolves")
-	}
-}
-
-// TestLiveMoomooDayLossGap verifies the pure predicate backing the DEC3
-// boot-time warning: moomoo/trd.go's snapshot() hardcodes AccountSnapshot.
-// DayPnL to 0 (Trd_GetFunds has no day-P&L field), so the global MaxDayLoss
-// circuit breaker (exec/gate.go's BreachedDayLoss, which sums every venue's
-// DayPnL) is blind to moomoo-originated losses whenever a moomoo venue is
-// configured alongside a non-zero MaxDayLoss. The predicate must require
-// BOTH conditions — either alone is not a gap.
-func TestLiveMoomooDayLossGap(t *testing.T) {
-	tests := []struct {
-		name string
-		cfg  config.Config
-		want bool
-	}{
-		{
-			name: "moomoo venue and MaxDayLoss>0",
-			cfg: config.Config{
-				Gate:   config.Gate{Global: config.GateGlobal{MaxDayLoss: 500}},
-				Venues: []config.Venue{{ID: "moomoo", Broker: "moomoo", AccountID: "123456", Env: "live"}},
-			},
-			want: true,
-		},
-		{
-			name: "moomoo venue but MaxDayLoss==0",
-			cfg: config.Config{
-				Gate:   config.Gate{Global: config.GateGlobal{MaxDayLoss: 0}},
-				Venues: []config.Venue{{ID: "moomoo", Broker: "moomoo", AccountID: "123456", Env: "live"}},
-			},
-			want: false,
-		},
-		{
-			name: "no moomoo venue but MaxDayLoss>0",
-			cfg: config.Config{
-				Gate:   config.Gate{Global: config.GateGlobal{MaxDayLoss: 500}},
-				Venues: []config.Venue{{ID: "tz", Broker: "tradezero"}},
-			},
-			want: false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := liveMoomooDayLossGap(tt.cfg); got != tt.want {
-				t.Fatalf("liveMoomooDayLossGap() = %v, want %v", got, tt.want)
-			}
-		})
 	}
 }

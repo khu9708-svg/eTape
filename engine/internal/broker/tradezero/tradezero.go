@@ -405,7 +405,7 @@ func (a *Adapter) emit(e exec.BrokerEvent) {
 func (a *Adapter) Events() <-chan exec.BrokerEvent { return a.events }
 
 func (a *Adapter) Capabilities() exec.Capabilities {
-	return exec.Capabilities{NativeReplace: false, FlattenAll: false, OvernightSession: false}
+	return exec.Capabilities{AuthoritativeDayPnL: true}
 }
 
 // pickRoute prefers a route validated against TZ's /routes listing (fetched

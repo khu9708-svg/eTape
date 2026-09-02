@@ -446,6 +446,7 @@ func (rc *restClient) snapshot(ctx context.Context) (exec.AccountSnapshot, []exe
 		return exec.AccountSnapshot{}, nil, nil, fmt.Errorf("tradezero: decode pnl: %w", err)
 	}
 	acct.DayPnL = pnl.DayPnl
+	acct.DayPnLSource = "broker"
 	acct.Realized = pnl.realized()
 	acct.TsMs = rc.clk.Now().UnixMilli()
 

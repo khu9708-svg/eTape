@@ -156,6 +156,11 @@ func NewCore(cfg CoreConfig) *Core {
 		cycles:                 newCycleProjection(),
 		closed:                 newClosedOrders(),
 	}
+	for v := range cfg.Gate.AccountRequired {
+		// The stale transition is emitted only after the poller's five-failure
+		// grace period; until then a venue is considered freshly armed.
+		c.state.SetAccountFresh(v, true)
+	}
 	c.state.SetActiveVenue(cfg.ActiveVenue)
 	// Master always boots disarmed — Recover never touches arm state, so a
 	// restart is fully disarmed until a deliberate arm click.
@@ -197,6 +202,17 @@ func (c *Core) FeedMark(m Mark) {
 	select {
 	case c.markCh <- m:
 	default:
+	}
+}
+
+// PublishBrokerEvent is the observer seam used by account polling and other
+// engine-owned sources that are not broker event channels.
+func (c *Core) PublishBrokerEvent(be BrokerEvent) {
+	select {
+	case c.bevents <- be:
+	default:
+		// Account refreshes are periodic; a full queue is safer to drop than to
+		// block the poller and stall all venue refreshes.
 	}
 }
 
@@ -420,11 +436,15 @@ func (c *Core) rollCycle() {
 }
 
 func (c *Core) emitProjectedAccount(v VenueID) {
-	start, open, realized, day := c.cycles.account(v)
-	if b := c.brokers[v]; b != nil && b.Capabilities().AuthoritativeDayPnL {
-		day = c.state.Venue(v).Account.DayPnL
+	acct := c.state.Venue(v).Account
+	if acct.TsMs == 0 && acct.Equity == 0 && acct.BuyingPower == 0 && acct.AvailableCash == 0 && acct.Realized == 0 && acct.DayPnL == 0 {
+		return
 	}
-	c.emit(AccountUpdate{Account: c.state.Venue(v).Account, MasterArmed: c.state.MasterArmed,
+	start, open, realized, day := c.cycles.account(v)
+	if b := c.brokers[v]; b != nil && (b.Capabilities().AuthoritativeDayPnL || b.Capabilities().CalculatedDayPnL) {
+		day = acct.DayPnL
+	}
+	c.emit(AccountUpdate{Account: acct, MasterArmed: c.state.MasterArmed,
 		CycleStartMs: start, CycleRealized: realized, DisplayRealized: open, DisplayDayPnL: day})
 }
 
@@ -710,6 +730,12 @@ func (c *Core) handleBrokerEvent(_ context.Context, be BrokerEvent) {
 			slog.Error("exec: append broker event failed", "kind", e.Kind(), "err", err)
 		}
 	case BrokerAccount:
+		if b := c.brokers[e.Account.Venue]; b != nil && b.Capabilities().CalculatedDayPnL && e.Account.DayPnLSource == "" {
+			previous := c.state.Venue(e.Account.Venue).Account
+			e.Account.DayPnL = previous.DayPnL
+			e.Account.DayPnLSource = previous.DayPnLSource
+			e.Account.DayPnLProvisional = previous.DayPnLProvisional
+		}
 		c.state.ReconcileAccount(e.Account)
 		if BreachedDayLoss(c.state, c.gate) && c.state.MasterArmed {
 			c.state.SetMasterArmed(false)
@@ -717,6 +743,13 @@ func (c *Core) handleBrokerEvent(_ context.Context, be BrokerEvent) {
 			c.emitStatus()
 		}
 		c.emitProjectedAccount(e.Account.Venue)
+	case BrokerAccountFresh:
+		c.state.SetAccountFresh(e.V, e.Fresh)
+		if !e.Fresh && c.state.MasterArmed {
+			c.state.SetMasterArmed(false)
+			c.syslog("exec.autodisarm", "account data stale: master disarmed")
+			c.emitStatus()
+		}
 	case BrokerPositions:
 		c.state.ReconcilePositions(e.V, e.Positions)
 		for _, p := range e.Positions {

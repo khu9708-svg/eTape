@@ -244,8 +244,17 @@ type AccountSnapshot struct {
 	SodEquity     float64
 	Realized      float64
 	DayPnL        float64
-	Leverage      float64
-	TsMs          int64
+	// NetCashFlow is the signed cash deposited into (+) or withdrawn from (-)
+	// the account during the current trading cycle. It is used only when a
+	// broker does not report an authoritative DayPnL (currently Moomoo).
+	NetCashFlow float64
+	// DayPnLSource is "broker" for an authoritative broker value and
+	// "calculated" for eTape's close-to-close projection. Empty is retained
+	// for legacy snapshots that predate the source marker.
+	DayPnLSource      string
+	DayPnLProvisional bool
+	Leverage          float64
+	TsMs              int64
 }
 
 // OrderRequest is a fully-specified order to one venue. ClientOrderID is set by

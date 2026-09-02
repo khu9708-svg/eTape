@@ -42,9 +42,6 @@ func TestValidateVenueConfigRejects(t *testing.T) {
 		"moomoo non-numeric account": func(vc *VenueConfig) {
 			vc.Venues = append(vc.Venues, Venue{ID: "moomoo-live", Broker: "moomoo", Env: "live", AccountID: "not-a-number"})
 		},
-		"moomoo paper env": func(vc *VenueConfig) {
-			vc.Venues = append(vc.Venues, Venue{ID: "moomoo-paper", Broker: "moomoo", Env: "paper", AccountID: "12345678"})
-		},
 		"negative gate cap":         func(vc *VenueConfig) { vc.Gate.Global.MaxDayLoss = -1 },
 		"gate key unknown id":       func(vc *VenueConfig) { vc.Gate.Venue["ghost"] = GateVenue{} },
 		"negative starting balance": func(vc *VenueConfig) { vc.Venues[2].StartingBalance = -1 },
@@ -81,6 +78,14 @@ func TestValidateVenueConfigAcceptsMoomooNumericAccountID(t *testing.T) {
 	vc.Venues = append(vc.Venues, Venue{ID: "moomoo-live", Broker: "moomoo", Env: "live", AccountID: "12345678"})
 	if err := ValidateVenueConfig(vc, []string{"alpaca", "tradeZero"}); err != nil {
 		t.Fatalf("valid moomoo venue rejected: %v", err)
+	}
+}
+
+func TestValidateVenueConfigAcceptsMoomooPaper(t *testing.T) {
+	vc := validVC()
+	vc.Venues = append(vc.Venues, Venue{ID: "moomoo-paper", Broker: "moomoo", Env: "paper", AccountID: "12345678"})
+	if err := ValidateVenueConfig(vc, []string{"alpaca", "tradeZero"}); err != nil {
+		t.Fatalf("paper moomoo venue rejected: %v", err)
 	}
 }
 

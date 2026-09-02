@@ -330,8 +330,6 @@ export function AppShell({ workspaceName, stores, scheduler, workspaceStore, lin
   const armed = execStatus?.masterArmed ?? false;
   const execStatusRef = useRef(execStatus);
   execStatusRef.current = execStatus;
-  const activeVenueRef = useRef(orderConfig.config.activeVenue);
-  activeVenueRef.current = orderConfig.config.activeVenue;
   const hotkeyTargetInputForPanel = useCallback((panelId: string): HotkeyTargetInput | null => {
     const panel = wsRef.current?.panels.find((p) => p.id === panelId);
     if (!panel) return null;
@@ -340,7 +338,7 @@ export function AppShell({ workspaceName, stores, scheduler, workspaceStore, lin
       panel: panel.id,
       group,
       ...(group ? { symbol: linkGroups.symbolFor(group) } : { symbol: panel.settings.symbol as string | undefined }),
-      venue: resolveVenue(group, linkGroups, activeVenueRef.current, execStatusRef.current),
+      venue: resolveVenue(group, linkGroups, undefined, execStatusRef.current),
     };
   }, [linkGroups]);
   const refreshOwnedTarget = useCallback(() => {

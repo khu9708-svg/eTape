@@ -97,7 +97,7 @@ func New(venue exec.VenueID, clk clock.Clock, startingCash float64, opts Options
 		pos:           map[string]*exec.Position{},
 		acct: exec.AccountSnapshot{
 			Venue: venue, Equity: startingCash, BuyingPower: startingCash,
-			AvailableCash: startingCash, SodEquity: startingCash,
+			AvailableCash: startingCash, SodEquity: startingCash, TsMs: clk.Now().UnixMilli(),
 		},
 	}
 }

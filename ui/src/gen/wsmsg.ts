@@ -273,6 +273,8 @@ export interface AccountRow {
   sodEquity: number /* float64 */;
   realized: number /* float64 */;
   dayPnl: number /* float64 */;
+  dayPnlSource?: string;
+  dayPnlProvisional?: boolean;
   leverage: number /* float64 */;
   tsMs: number /* int64 */;
   cycleStartMs: number /* int64 */;
@@ -292,6 +294,7 @@ export interface GlobalLimitsView {
 export interface VenueStatus {
   venue: string;
   broker: Broker;
+  env?: string;
   connected: boolean;
   reconcilePending: boolean;
   note: string;
@@ -630,6 +633,10 @@ export interface SetConfigArgs {
 }
 export interface DeleteConfigArgs {
   key: string;
+}
+export interface SetAccountDemandArgs {
+  panelId: string;
+  venue: string;
 }
 export interface SetScannerFiltersArgs {
   filters: ScannerFilters;

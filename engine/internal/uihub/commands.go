@@ -39,6 +39,11 @@ type indicatorCtl interface {
 	ReleaseIndicator(connID uint64, id string)
 }
 
+type accountDemandCtl interface {
+	Set(connID uint64, panelID string, venue exec.VenueID)
+	ReleaseConnection(connID uint64)
+}
+
 // demandCtl is the hub surface the on-demand-subscription commands drive
 // (satisfied by *Hub). EnsureDemand/ReleaseDemand are Run-loop-side; the
 // blocking existence probe is done here in the conn goroutine via the feed
@@ -89,20 +94,29 @@ type knownSymbolBox struct{ fn func(string) bool }
 // method (symbol-existence validation for EnsureSymbol/FocusGroup) — a
 // field and a method can't share a name on the same type.
 type commands struct {
-	ex          execDoer
-	cfg         configStore
-	ind         indicatorCtl
-	dem         demandCtl
-	va          venueAdmin
-	feed        func() Feed
-	knownSymbol atomic.Pointer[knownSymbolBox]
-	tester      venueTester
-	locates     LocateRegistry
-	onConfigSet func(key, value string)
-	restart     func()
-	startDemo   func() error
-	wl          atomic.Pointer[watchlistBox]
-	scanner     atomic.Pointer[scannerBox]
+	ex             execDoer
+	cfg            configStore
+	ind            indicatorCtl
+	dem            demandCtl
+	va             venueAdmin
+	feed           func() Feed
+	knownSymbol    atomic.Pointer[knownSymbolBox]
+	tester         venueTester
+	locates        LocateRegistry
+	accountDemands accountDemandCtl
+	onConfigSet    func(key, value string)
+	restart        func()
+	startDemo      func() error
+	wl             atomic.Pointer[watchlistBox]
+	scanner        atomic.Pointer[scannerBox]
+}
+
+func (cd *commands) setAccountDemandRegistry(r accountDemandCtl) { cd.accountDemands = r }
+
+func (cd *commands) releaseAccountDemand(connID uint64) {
+	if cd.accountDemands != nil {
+		cd.accountDemands.ReleaseConnection(connID)
+	}
 }
 
 func newCommands(ex execDoer, cfg configStore, ind indicatorCtl, dem demandCtl, va venueAdmin, feed func() Feed, tester venueTester, locateRegistries ...LocateRegistry) *commands {
@@ -253,6 +267,15 @@ func (cd *commands) handle(ctx context.Context, name string, args json.RawMessag
 			return blocked("bad args"), false
 		}
 		cd.cfg.DeleteConfig(a.Key)
+		return wsmsg.AckMsg{Status: "accepted"}, false
+	case "SetAccountDemand":
+		var a wsmsg.SetAccountDemandArgs
+		if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.PanelID) == "" {
+			return blocked("bad args"), false
+		}
+		if cd.accountDemands != nil {
+			cd.accountDemands.Set(connID, a.PanelID, exec.VenueID(a.Venue))
+		}
 		return wsmsg.AckMsg{Status: "accepted"}, false
 	case "GetScannerFilters":
 		if b := cd.scanner.Load(); b != nil {

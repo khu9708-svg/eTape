@@ -33,6 +33,7 @@ import (
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdcommon"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdupdateorder"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdupdateorderfill"
+	"github.com/earlisreal/eTape/engine/internal/session"
 )
 
 // errFlattenUnsupported / errResetBalanceUnsupported back Flatten/ResetBalance.
@@ -82,6 +83,11 @@ type Adapter struct {
 	// connectedOnce distinguishes the very first connect (nothing could have
 	// been missed yet: no StreamGap) from a reconnect. Mirrors alpaca's gate.
 	connectedOnce bool
+
+	cashFlowMu   sync.Mutex
+	cashFlowDate string
+	cashFlowAt   time.Time
+	cashFlowNet  float64
 }
 
 var _ exec.Broker = (*Adapter)(nil)
@@ -227,7 +233,7 @@ func (a *Adapter) Events() <-chan exec.BrokerEvent { return a.events }
 // session) support, but no native flatten-all (FlattenAll false: moomoo has no
 // close-all-positions primitive, unlike Alpaca's DELETE /v2/positions).
 func (a *Adapter) Capabilities() exec.Capabilities {
-	return exec.Capabilities{NativeReplace: true, FlattenAll: false, OvernightSession: true}
+	return exec.Capabilities{NativeReplace: true, FlattenAll: false, OvernightSession: true, CalculatedDayPnL: true}
 }
 
 // ProbeRTT times a lightweight, read-only, side-effect-free round trip
@@ -380,6 +386,53 @@ func (a *Adapter) Flatten(context.Context) error { return errFlattenUnsupported 
 // Capabilities().ResetBalance is false so exec.Core never calls this in
 // practice.
 func (a *Adapter) ResetBalance(context.Context, float64) error { return errResetBalanceUnsupported }
+
+// PollAccount is the lightweight account-only path used by eTape's demand and
+// risk poller. Day P&L is filled from the persisted close baseline there.
+func (a *Adapter) PollAccount(ctx context.Context) (exec.AccountSnapshot, bool, time.Duration, error) {
+	start := time.Now()
+	funds, err := a.tc.getFunds(ctx)
+	if err != nil {
+		return exec.AccountSnapshot{}, true, time.Since(start), err
+	}
+	now := a.clk.Now()
+	date := now.In(session.Loc()).Format("2006-01-02")
+	netFlow := a.currentCashFlow(ctx, date, now)
+	return exec.AccountSnapshot{
+		Venue: a.venue, Equity: funds.GetTotalAssets(), BuyingPower: funds.GetPower(),
+		AvailableCash: funds.GetCash(), Realized: funds.GetRealizedPL(), NetCashFlow: netFlow,
+		TsMs: now.UnixMilli(),
+	}, true, time.Since(start), nil
+}
+
+func (a *Adapter) currentCashFlow(ctx context.Context, date string, now time.Time) float64 {
+	a.cashFlowMu.Lock()
+	if a.cashFlowDate == date && now.Sub(a.cashFlowAt) < time.Minute {
+		flow := a.cashFlowNet
+		a.cashFlowMu.Unlock()
+		return flow
+	}
+	a.cashFlowMu.Unlock()
+
+	flow, err := a.tc.getCashFlow(ctx, date)
+	if err != nil {
+		// Older OpenD builds may not expose Trd_FlowSummary. Keep the account
+		// snapshot usable; a missing flow report means no adjustment this cycle.
+		slog.Warn("moomoo cash-flow poll failed", "venue", a.venue, "date", date, "err", err)
+		a.cashFlowMu.Lock()
+		if a.cashFlowDate == date {
+			flow := a.cashFlowNet
+			a.cashFlowMu.Unlock()
+			return flow
+		}
+		a.cashFlowMu.Unlock()
+		return 0
+	}
+	a.cashFlowMu.Lock()
+	a.cashFlowDate, a.cashFlowAt, a.cashFlowNet = date, now, flow
+	a.cashFlowMu.Unlock()
+	return flow
+}
 
 // Snapshot fetches the trade-authoritative account/positions/orders view and
 // stamps venue on every returned struct (a gap Task 3's snapshot deliberately

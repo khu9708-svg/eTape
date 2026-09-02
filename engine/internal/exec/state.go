@@ -20,15 +20,20 @@ func newVenueState() *VenueState {
 // routing both read it.
 type State struct {
 	MasterArmed bool
+	// ActiveVenue is legacy state kept only so old replay fixtures can decode;
+	// venue routing is now owned by LinkGroups and never reads this field.
 	ActiveVenue VenueID
 	Venues      map[VenueID]*VenueState
-	orderIndex  map[string]VenueID
+	// AccountFresh is populated by the account poller after the stale-data
+	// threshold. Missing entries mean no stale transition has been observed.
+	AccountFresh map[VenueID]bool
+	orderIndex   map[string]VenueID
 }
 
 // NewState builds empty state for a fixed venue set (venues come from config;
 // unknown-venue events are ignored defensively).
 func NewState(venues []VenueID) *State {
-	s := &State{Venues: map[VenueID]*VenueState{}, orderIndex: map[string]VenueID{}}
+	s := &State{Venues: map[VenueID]*VenueState{}, AccountFresh: map[VenueID]bool{}, orderIndex: map[string]VenueID{}}
 	for _, v := range venues {
 		s.Venues[v] = newVenueState()
 	}

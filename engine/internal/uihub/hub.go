@@ -657,6 +657,9 @@ func (h *Hub) handleRegister(c client) {
 
 func (h *Hub) handleUnregister(c client) {
 	id := c.id()
+	if h.cmd != nil {
+		h.cmd.releaseAccountDemand(id)
+	}
 	if m := h.demands[id]; m != nil {
 		if f := h.feed(); f != nil {
 			for did := range m {

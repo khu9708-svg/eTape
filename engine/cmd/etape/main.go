@@ -393,26 +393,25 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 		_ = st.Close()
 		return 1, false, nil
 	}
-	activeConfig, activeConfigOK, activeConfigErr := st.GetConfig("orderConfig")
-	if activeConfigErr != nil {
-		log.Warn("read active venue config (using fallback)", "err", activeConfigErr)
-	}
-	if !activeConfigOK {
-		activeConfig = ""
-	}
-	activeVenue := resolveActiveVenue(activeConfig, vbs)
 	locateProviders := locateRegistry(vbs)
 	brokers := map[exec.VenueID]exec.Broker{}
 	venueIDs := make([]exec.VenueID, 0, len(vbs))
 	gateConfig := buildGateConfig(cfg.Gate)
-	gateConfig.DayLossPolicies = dayLossPolicies(vbs)
-	alpacaAdapterMap := make(map[exec.VenueID]*alpaca.Adapter)
+	gateConfig.DayLossEligible = map[exec.VenueID]bool{}
+	gateConfig.AccountRequired = map[exec.VenueID]bool{}
+	accountHealthVenues := map[exec.VenueID]bool{}
 	var brokerWG sync.WaitGroup
 	for _, vb := range vbs {
 		brokers[vb.ID] = vb.Broker
 		venueIDs = append(venueIDs, vb.ID)
-		if a, ok := vb.Broker.(*alpaca.Adapter); ok {
-			alpacaAdapterMap[vb.ID] = a
+		if strings.EqualFold(vb.Env, "live") {
+			gateConfig.DayLossEligible[vb.ID] = true
+			gateConfig.AccountRequired[vb.ID] = true
+		}
+		if strings.EqualFold(vb.Env, "live") {
+			if _, ok := vb.Broker.(*alpaca.Adapter); ok {
+				accountHealthVenues[vb.ID] = true
+			}
 		}
 		if vb.Run != nil {
 			brokerWG.Add(1)
@@ -420,7 +419,7 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 		}
 	}
 	execCore := exec.NewCore(exec.CoreConfig{
-		Venues: venueIDs, Gate: gateConfig, Store: st, ActiveVenue: activeVenue,
+		Venues: venueIDs, Gate: gateConfig, Store: st,
 		Brokers: brokers, Clock: execClk, IDGen: exec.NewOrderIDGen(execClk, rand.Reader),
 		SysLog:          st.AppendSysEvent,
 		StartingBalance: startingBalances(cfg),
@@ -430,8 +429,14 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 	}
 	execDone := make(chan struct{})
 	go func() { defer close(execDone); _ = execCore.Run(ctx) }()
-	accountPoller := alpaca.NewAccountPoller(alpacaAdapterMap, activeVenue, execClk)
-	go func() { _ = accountPoller.Run(ctx) }()
+	demands := exec.NewAccountDemandRegistry()
+	accountPoller := exec.NewAccountPoller(exec.AccountPollerConfig{
+		Brokers: brokers, Demands: demands, Store: st, Clock: execClk,
+		HealthVenues: accountHealthVenues, Emit: execCore.PublishBrokerEvent,
+		RiskVenues: gateConfig.AccountRequired,
+	})
+	accountDone := make(chan struct{})
+	go func() { defer close(accountDone); _ = accountPoller.Run(ctx) }()
 
 	// Asset metadata is supplemental. Start one-shot loads for every Alpaca
 	// account after execution recovery so locate eligibility is venue-specific;
@@ -479,18 +484,8 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 		Position: time.Duration(cfg.UIHub.PositionMs) * time.Millisecond,
 		Buf:      4096, TapeCap: cfg.UIHub.TapeSnapshot, NewsCap: 500, FillsCap: 1000, EventsCap: 500, TradesCap: 1000,
 		OutBuf: cfg.UIHub.OutboundQueue, DistDir: cfg.UIHub.DistDir,
-		Demo: *demo,
-		OnConfigSet: func(key, value string) {
-			if key != "orderConfig" {
-				return
-			}
-			venue := resolveActiveVenue(value, vbs)
-			if ack := execCore.DoContext(ctx, exec.SetActiveVenue{Venue: venue}); !ack.Accepted {
-				log.Warn("set active venue", "venue", venue, "err", ack.Reason)
-				return
-			}
-			accountPoller.SetActiveVenue(venue)
-		},
+		Demo:          *demo,
+		AccountDemand: demands,
 	}, execCore, st, core, venueAdm, venueProbe, restartInPlace, startDemo, locateProviders)
 	hubDone := make(chan struct{})
 	go func() { defer close(hubDone); _ = hub.Run(ctx) }()
@@ -564,17 +559,6 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 	var orch *backfill.Orchestrator
 	var scanWG sync.WaitGroup
 	var dropWG sync.WaitGroup
-	var sysEventSeq int64
-	if live && liveMoomooDayLossGap(cfg) {
-		detail := "MaxDayLoss does not cover moomoo (DayPnL unavailable); moomoo-originated losses are not gated by the day-loss circuit breaker"
-		log.Warn(detail)
-		st.AppendSysEvent("gate", detail)
-		sysEventSeq++
-		hub.Publish(wsmsg.TopicSysEvents, "", wsmsg.SysEvent{
-			Seq: sysEventSeq, Ts: time.Now().UTC().Format("2006-01-02T15:04:05.000Z07:00"),
-			Kind: "gate", Detail: detail, Level: "warn",
-		})
-	}
 	st.AppendSysEvent("boot", "engine up")
 	hub.Publish(wsmsg.TopicSysBoot, "", wsmsg.BootStatus{Phase: "connecting"})
 	dropWG.Add(1)
@@ -838,6 +822,7 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 	forwardWG.Wait()  // forwardMD + demo's forwardDailyBars stopped: no more ArchiveDaily
 	dropWG.Wait()     // dropped-updates watcher stopped: no more AppendSysEvent from it
 	<-execDone        // exec.Core.Run returned: no more AppendExecEvent
+	<-accountDone     // account poller stopped: no more baseline SetConfig writes
 	brokerWG.Wait()
 	if err := st.Close(); err != nil {
 		log.Error("close store", "err", err)
@@ -1196,7 +1181,7 @@ func startPollers(ctx context.Context, cfg config.Config, r pollerRequester, dem
 	// health: mmProbe is the moomoo probe (real OpenD RTT in live/replay, a
 	// constant synthetic RTT in -demo); app-ping RTT source is nil in v1
 	// (ui-engine shows down until ping tracking is wired). accountHealth is the
-	// active Alpaca account poller's cached result, so health never performs a
+	// engine-wide poller's cached live-Alpaca result, so health never performs a
 	// second Alpaca REST request.
 	var qsrc health.QuotaSource
 	if startQuota {

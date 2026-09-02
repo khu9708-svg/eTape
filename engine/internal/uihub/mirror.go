@@ -27,6 +27,7 @@ type staged struct {
 type venueMeta struct {
 	ID     string
 	Broker wsmsg.Broker
+	Env    string
 	Note   string
 	Gate   wsmsg.GateLimitsView
 }
@@ -95,7 +96,7 @@ func newMirror(venues []venueMeta, global wsmsg.GlobalLimitsView, tapeCap, newsC
 	}
 	for _, v := range venues {
 		m.venueStatus[v.ID] = &wsmsg.VenueStatus{
-			Venue: v.ID, Broker: v.Broker, Gate: v.Gate,
+			Venue: v.ID, Broker: v.Broker, Env: v.Env, Gate: v.Gate,
 			Note: v.Note,
 		}
 		m.venueOrder = append(m.venueOrder, v.ID)

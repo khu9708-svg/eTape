@@ -21,9 +21,9 @@ type accountPollResult struct {
 	err        error
 }
 
-// AccountPoller keeps one active Alpaca account fresh. It is deliberately
-// separate from Adapter.Run: order-update WebSockets and account REST health
-// have different lifecycles and the latter follows the global active venue.
+// AccountPoller is the legacy Alpaca-only poller retained for compatibility
+// with older callers. Production wiring uses exec.AccountPoller, which polls
+// every live risk venue and each demanded Account panel independently.
 type AccountPoller struct {
 	clk      clock.Clock
 	adapters map[exec.VenueID]*Adapter
@@ -62,7 +62,7 @@ func NewAccountPoller(adapters map[exec.VenueID]*Adapter, active exec.VenueID, c
 	}
 }
 
-// SetActiveVenue switches the account source immediately. The request
+// SetActiveVenue switches the legacy account source immediately. The request
 // context is canceled before the new selection is scheduled; its completion
 // is still generation-checked so a transport that ignores cancellation cannot
 // publish stale health.
@@ -94,9 +94,8 @@ func (p *AccountPoller) SetActiveVenue(venue exec.VenueID) {
 	}
 }
 
-// Latest implements health's account-health source. active reports whether
-// the current global venue is an Alpaca venue; ok reports a successful latest
-// admitted account request for that venue.
+// Latest implements health's account-health source for legacy callers. New
+// wiring uses exec.AccountPoller directly.
 func (p *AccountPoller) Latest() (rtt time.Duration, ok, active bool) {
 	p.healthMu.RLock()
 	defer p.healthMu.RUnlock()
@@ -219,4 +218,12 @@ func (a *Adapter) pollAccount(ctx context.Context) (exec.AccountSnapshot, bool, 
 	start := time.Now()
 	acct, admitted, err := a.rest.pollAccount(ctx)
 	return acct, admitted, time.Since(start), err
+}
+
+// PollAccount exposes the account-only, reserve-aware REST request to the
+// engine-wide account poller.
+func (a *Adapter) PollAccount(ctx context.Context) (exec.AccountSnapshot, bool, time.Duration, error) {
+	acct, admitted, rtt, err := a.pollAccount(ctx)
+	acct.Venue = a.venue
+	return acct, admitted, rtt, err
 }

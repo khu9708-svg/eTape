@@ -29,6 +29,7 @@ type PanelTestOptions = {
 function mkProps(options: PanelTestOptions = {}) {
   const stores = makeStores();
   const linkGroups = new LinkGroups(new BroadcastChannelBus(), () => {});
+  linkGroups.hydrateVenues({ green: "alpaca-paper" });
   const sentQueries: Array<{ name: string; args: unknown }> = [];
   const sentCommands: Array<{ name: string; args: unknown }> = [];
   const commands = {

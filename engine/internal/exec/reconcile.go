@@ -35,6 +35,13 @@ func (s *State) SetMasterArmed(on bool) { s.MasterArmed = on }
 
 func (s *State) SetActiveVenue(v VenueID) { s.ActiveVenue = v }
 
+func (s *State) SetAccountFresh(v VenueID, fresh bool) {
+	if s.AccountFresh == nil {
+		s.AccountFresh = map[VenueID]bool{}
+	}
+	s.AccountFresh[v] = fresh
+}
+
 // IsArmed reports whether trading on a venue is permitted: master armed AND
 // the venue is registered.
 func (s *State) IsArmed(v VenueID) bool {

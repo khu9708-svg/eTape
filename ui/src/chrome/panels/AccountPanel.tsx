@@ -6,7 +6,8 @@ import type { ClosedOrder, Fill, Order, PositionRow, Quote } from "../../wire/co
 import { useTheme } from "../ThemeProvider";
 import { useToasts } from "../Toast";
 import { useOrderCommands } from "../exec/useOrderCommands";
-import { useVenueSelection } from "../exec/venueSelection";
+import { requiresLiveConfirmation, useVenueSelection } from "../exec/venueSelection";
+import { useAccountDemand } from "../exec/useAccountDemand";
 import { useOrderConfig } from "../exec/useOrderConfig";
 import { resolvePlaceTemplate } from "../exec/resolveTemplate";
 import type { PlaceOrderTemplate } from "../exec/actionTemplate";
@@ -285,6 +286,7 @@ function StatsStrip({
   const bp = account?.buyingPower ?? null;
   const dayPnl = account?.dayPnl ?? null;
   const realized = account?.realized ?? null;
+  const stale = !!account && (account.tsMs <= 0 || Date.now() - account.tsMs > 5000);
   const unrealized = stores.exec.positions()
     .filter((p) => p.venue === venue && p.qty !== 0)
     .reduce((sum, p) => sum + displayUnrealized(stores.quote.get(p.symbol), p.avgPrice, p.qty, p.unrealizedPnl), 0);
@@ -326,6 +328,9 @@ function StatsStrip({
       {cell("Day P&L", "acct-daypnl", money(dayPnl), dayPnl ?? 0)}
       {cell("Unrealized", "acct-unrealized", money(unrealized), unrealized)}
       {cell("Realized", "acct-realized", money(realized), realized ?? 0)}
+      {account && <span data-testid="acct-pnl-source" title={account.dayPnlProvisional ? "Since startup; prior trading-close baseline was unavailable" : account.dayPnlSource === "calculated" ? "Calculated" : "Broker reported"}
+        style={{ fontSize: 10, color: palette.textMuted }}>{account.dayPnlProvisional ? "Since startup" : account.dayPnlSource === "calculated" ? "Calculated" : "Broker reported"}</span>}
+      {stale && account && <span data-testid="acct-stale" style={{ fontSize: 10, color: palette.warn }} title={`Last account update ${formatEtDateTime(account.tsMs)}`}>Stale · {formatEtDateTime(account.tsMs)}</span>}
       <div style={{ flex: 1 }} />
     </div>
   );
@@ -505,6 +510,8 @@ export function AccountPanel({ config, stores, commands, onConfigChange, linkGro
   const group = groupProp === undefined ? config.group : groupProp;
   const openPositionSymbol = (symbol: string) => linkGroups.focus(group ?? "green", symbol);
   const { venue, venues, selectVenue } = useVenueSelection(group, linkGroups, stores);
+  useAccountDemand(commands, config.id, group === null ? "" : venue);
+  const status = stores.exec.status();
   const { config: orderConfig } = useOrderConfig();
   const extBufferPct = orderConfig.extHoursMarketBufferPct ?? 1;
   // Portaled into PanelFrame's ledger-header actions slot, beside the close
@@ -514,12 +521,19 @@ export function AccountPanel({ config, stores, commands, onConfigChange, linkGro
   const actionsSlot = useContext(PanelHeaderActionsSlotContext);
   const [exportOpen, setExportOpen] = useState(false);
   const exportBtnRef = useRef<HTMLButtonElement | null>(null);
+  const changeVenue = (next: string) => {
+    if (requiresLiveConfirmation(status, venue, next) && !window.confirm("Switch this Link Group from paper to live trading?")) return;
+    selectVenue(next);
+  };
   const venueSelect = (
-    <select data-testid="acct-venue" className="ctl mono" value={venue} onChange={(e) => selectVenue(e.target.value)}
+    <select data-testid="acct-venue" className="ctl mono" value={venue} disabled={group === null} onChange={(e) => changeVenue(e.target.value)}
       style={{ padding: "2px 9px", margin: "1px 0" }}>
+      {group === null && <option value="">Choose a Link Group</option>}
       {venues.map((v) => <option key={v} value={v}>{v}</option>)}
     </select>
   );
+  const previousVenue = linkGroups.previousVenueFor(group);
+  const oldOrders = previousVenue ? stores.exec.orders().filter((o) => o.order.venue === previousVenue && (o.optimistic || isWorking(o.order.status))).length : 0;
   const headerActions = (
     <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
       {venueSelect}
@@ -534,6 +548,10 @@ export function AccountPanel({ config, stores, commands, onConfigChange, linkGro
   const accountCycleStart = stores.exec.accounts().find((a) => a.venue === venue)?.cycleStartMs ?? 0;
   const [fillCycleStart, setFillCycleStart] = useState(accountCycleStart);
   useEffect(() => {
+    if (!venue) {
+      setFillCycleStart(0);
+      return;
+    }
     let live = true;
     void commands.sendQuery("QueryCycleFills", { venue }).then((raw) => {
       if (!live) return;
@@ -583,6 +601,7 @@ export function AccountPanel({ config, stores, commands, onConfigChange, linkGro
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: palette.bg, color: palette.text, fontFamily: "inherit" }}>
       {actionsSlot === undefined ? headerActions : actionsSlot ? createPortal(headerActions, actionsSlot) : null}
+      {oldOrders > 0 && <div data-testid="venue-switch-warning" style={{ padding: "3px 8px", color: palette.warn, fontSize: 11 }}>Working orders remain on {previousVenue} ({oldOrders}).</div>}
       <StatsStrip stores={stores} palette={palette} venue={venue} />
       <OrdersTable stores={stores} oc={oc} palette={palette} config={config} onConfigChange={onConfigChange} venue={venue} height={ordersHeight} availableWidth={width} />
       <div data-testid="orders-resize-handle" onMouseDown={startResize}

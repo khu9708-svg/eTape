@@ -12,6 +12,7 @@ import (
 	"github.com/earlisreal/eTape/engine/internal/feed/opend"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/common"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdcommon"
+	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdflowsummary"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdgetacclist"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdgetfunds"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdgetorderlist"
@@ -22,6 +23,17 @@ import (
 )
 
 const testAccID = uint64(123456789)
+
+func TestNetCashFlow(t *testing.T) {
+	flows := []*trdflowsummary.FlowSummaryInfo{
+		{CashFlowDirection: proto.Int32(int32(trdflowsummary.TrdCashFlowDirection_TrdCashFlowDirection_In)), CashFlowAmount: proto.Float64(100)},
+		{CashFlowDirection: proto.Int32(int32(trdflowsummary.TrdCashFlowDirection_TrdCashFlowDirection_Out)), CashFlowAmount: proto.Float64(25)},
+		{CashFlowDirection: proto.Int32(int32(trdflowsummary.TrdCashFlowDirection_TrdCashFlowDirection_Out)), CashFlowAmount: proto.Float64(-5)},
+	}
+	if got := netCashFlow(flows); got != 70 {
+		t.Fatalf("netCashFlow = %v, want 70", got)
+	}
+}
 
 // newTestTrdClient dials a real opend.Client at m's address (System clock --
 // this exercises the actual TCP framing/handshake, not a mock of

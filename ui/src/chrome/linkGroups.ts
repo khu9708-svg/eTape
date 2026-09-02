@@ -26,6 +26,7 @@ export class BroadcastChannelBus implements LinkBus {
 export class LinkGroups {
   private readonly focused = new Map<Exclude<LinkGroup, null>, string>();
   private readonly focusedVenues = new Map<Exclude<LinkGroup, null>, VenueID>();
+  private readonly previousVenues = new Map<Exclude<LinkGroup, null>, VenueID>();
   private readonly focusTimings = new Map<Exclude<LinkGroup, null>, FocusTiming>();
   private focusTimingSequence = 0;
   private readonly subs = new Set<() => void>();
@@ -97,7 +98,13 @@ export class LinkGroups {
     return group ? this.focusedVenues.get(group) : undefined;
   }
 
+  previousVenueFor(group: LinkGroup): VenueID | undefined {
+    return group ? this.previousVenues.get(group) : undefined;
+  }
+
   private setLocalVenue(group: Exclude<LinkGroup, null>, venue: VenueID): void {
+    const previous = this.focusedVenues.get(group);
+    if (previous && previous !== venue) this.previousVenues.set(group, previous);
     this.focusedVenues.set(group, venue);
     this.subs.forEach((cb) => cb());
   }

@@ -769,6 +769,7 @@ func (rc *restClient) decodeAccount(body []byte) (exec.AccountSnapshot, error) {
 		SodEquity:     float64(aa.LastEquity),
 		Leverage:      float64(aa.Multiplier),
 		DayPnL:        float64(aa.Equity) - float64(aa.LastEquity),
+		DayPnLSource:  "broker",
 		TsMs:          rc.clk.Now().UnixMilli(),
 	}, nil
 }

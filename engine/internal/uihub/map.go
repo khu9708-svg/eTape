@@ -201,13 +201,16 @@ func mapAccount(a exec.AccountSnapshot) wsmsg.AccountRow {
 	return wsmsg.AccountRow{
 		Venue: string(a.Venue), Equity: a.Equity, BuyingPower: a.BuyingPower,
 		AvailableCash: a.AvailableCash, SodEquity: a.SodEquity, Realized: a.Realized,
-		DayPnl: a.DayPnL, Leverage: a.Leverage, TsMs: a.TsMs,
+		DayPnl: a.DayPnL, DayPnlSource: a.DayPnLSource, DayPnlProvisional: a.DayPnLProvisional,
+		Leverage: a.Leverage, TsMs: a.TsMs,
 	}
 }
 
 func mapAccountUpdate(u exec.AccountUpdate) wsmsg.AccountRow {
 	w := mapAccount(u.Account)
-	w.Realized, w.DayPnl, w.CycleStartMs, w.CycleRealized = u.DisplayRealized, u.DisplayDayPnL, u.CycleStartMs, u.CycleRealized
+	// Realized is eTape's close-to-close cycle ledger, retained after the
+	// position returns flat. Broker Day P&L remains the single account P&L field.
+	w.Realized, w.DayPnl, w.CycleStartMs, w.CycleRealized = u.CycleRealized, u.DisplayDayPnL, u.CycleStartMs, u.CycleRealized
 	return w
 }
 

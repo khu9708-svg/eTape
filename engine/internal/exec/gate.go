@@ -19,8 +19,16 @@ type VenueLimits struct {
 }
 
 type GateConfig struct {
-	Global          GlobalLimits
-	Venue           map[VenueID]VenueLimits
+	Global GlobalLimits
+	Venue  map[VenueID]VenueLimits
+	// DayLossEligible identifies venues included in the aggregate circuit
+	// breaker. Production sets this for live venues; nil keeps legacy fixtures
+	// inclusive.
+	DayLossEligible map[VenueID]bool
+	// AccountRequired identifies live venues whose account snapshots protect
+	// new opening orders. A venue becomes stale after the poller reports false.
+	AccountRequired map[VenueID]bool
+	// Deprecated compatibility field; venue routing is no longer global.
 	DayLossPolicies map[VenueID]DayLossPolicy
 }
 
@@ -85,6 +93,9 @@ func Evaluate(s *State, cfg GateConfig, req OrderRequest, marks MarkSource) (boo
 	// 3. duplicate ID (global — one event log)
 	if _, dup := s.orderIndex[req.ClientOrderID]; dup {
 		return false, "duplicate order id"
+	}
+	if AnyRequiredAccountStale(s, cfg) && !reducesPosition(s, req) {
+		return false, "account data stale"
 	}
 
 	// 3.5. global day-loss breach — checked here (not just reactively via
@@ -168,10 +179,36 @@ func BreachedDayLoss(s *State, cfg GateConfig) bool {
 	}
 	var total float64
 	for v, vs := range s.Venues {
-		if cfg.DayLossPolicies[v].ActiveVenueOnly && v != s.ActiveVenue {
+		if cfg.DayLossEligible != nil {
+			if !cfg.DayLossEligible[v] {
+				continue
+			}
+		} else if cfg.DayLossPolicies[v].ActiveVenueOnly && v != s.ActiveVenue {
+			// Legacy fixture/config compatibility. Production always supplies
+			// DayLossEligible and therefore never uses a global active venue.
 			continue
 		}
 		total += vs.Account.DayPnL
 	}
 	return total <= -cfg.Global.MaxDayLoss
+}
+
+// AnyRequiredAccountStale is intentionally global: MaxDayLoss aggregates all
+// configured live venues, so opening risk is unsafe while any one of them has
+// lost its account feed.
+func AnyRequiredAccountStale(s *State, cfg GateConfig) bool {
+	for v, required := range cfg.AccountRequired {
+		if required && !s.AccountFresh[v] {
+			return true
+		}
+	}
+	return false
+}
+
+func reducesPosition(s *State, req OrderRequest) bool {
+	qty := s.VenuePositionShares(req.Venue, req.Symbol)
+	if qty == 0 {
+		return false
+	}
+	return (qty > 0 && !longward(req.Side)) || (qty < 0 && longward(req.Side))
 }

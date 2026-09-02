@@ -29,8 +29,20 @@ A selectable, draggable panel selector within a multi-panel Panel Group.
 _Avoid_: Panel header
 
 **Link Group**:
-A colour-named shared focus channel through which panels follow the same symbol and venue across windows. It is independent of a Panel Group; a panel with no Link Group is pinned.
+A colour-named shared focus channel through which panels follow the same symbol and execution venue across windows. It is independent of a Panel Group; a panel with no Link Group is pinned and has no execution venue.
 _Avoid_: Panel group, tab group
+
+**Execution Venue**:
+A configured broker account and environment (paper or live) that receives an order. A Link Group owns its selected Execution Venue; there is no global venue fallback, and existing orders remain owned by the venue selected when they were submitted.
+_Avoid_: Active venue, global broker
+
+**Day P&L**:
+The account-wide close-to-close profit or loss for the current trading cycle. Alpaca reports it; eTape calculates it for Moomoo from account equity, the persisted prior-close baseline, and signed cash flows. Paper accounts are excluded from Max Day Loss.
+_Avoid_: Gross P&L, realized P&L
+
+**Realized P&L**:
+The eTape-tracked profit or loss from completed local trade cycles, retained after a position returns flat and reset at the scheduled trading-day close. Trades made outside eTape are not included.
+_Avoid_: Broker Day P&L
 
 **Monitoring Workspace**:
 eTape's reserved workspace for following Scanner rankings with Chart Panels. It cannot be renamed or deleted, while its Panel Groups remain user-editable.

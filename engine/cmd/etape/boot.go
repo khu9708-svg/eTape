@@ -51,7 +51,7 @@ func venueMetas(cfg config.Config) []uihub.VenueMeta {
 		gv := cfg.Gate.Venue[v.ID]
 		note := ""
 		out = append(out, uihub.VenueMeta{
-			ID: v.ID, Broker: v.Broker, Note: note,
+			ID: v.ID, Broker: v.Broker, Env: v.Env, Note: note,
 			Gate: uihub.GateLimits{
 				MaxOrderValue: gv.MaxOrderValue, MaxPositionValue: gv.MaxPositionValue,
 				MaxPositionShares: gv.MaxPositionShares, MaxOpenOrders: gv.MaxOpenOrders,
@@ -76,6 +76,7 @@ func startingBalances(cfg config.Config) map[exec.VenueID]float64 {
 
 type venueBroker struct {
 	ID     exec.VenueID
+	Env    string
 	Broker exec.Broker
 	Run    func(ctx context.Context) // nil for sim; adapters' Run(ctx) returns no error (Plan 5)
 }
@@ -89,7 +90,7 @@ func buildBrokers(cfg config.Config, cr creds.File, clk clock.Clock) ([]venueBro
 		id := exec.VenueID(v.ID)
 		switch v.Broker {
 		case "sim":
-			out = append(out, venueBroker{ID: id, Broker: sim.New(id, clk, v.EffectiveStartingBalance(), sim.Options{SlippageBps: v.SlippageBps, FillLatencyMs: v.FillLatencyMs})})
+			out = append(out, venueBroker{ID: id, Env: v.Env, Broker: sim.New(id, clk, v.EffectiveStartingBalance(), sim.Options{SlippageBps: v.SlippageBps, FillLatencyMs: v.FillLatencyMs})})
 		case "tradezero":
 			pair, err := cr.Get(v.Credentials)
 			if err != nil {
@@ -99,7 +100,7 @@ func buildBrokers(cfg config.Config, cr creds.File, clk clock.Clock) ([]venueBro
 			if err != nil {
 				return nil, fmt.Errorf("venue %s: %w", v.ID, err)
 			}
-			out = append(out, venueBroker{ID: id, Broker: a, Run: a.Run})
+			out = append(out, venueBroker{ID: id, Env: v.Env, Broker: a, Run: a.Run})
 		case "alpaca":
 			pair, err := cr.Get(v.Credentials)
 			if err != nil {
@@ -109,11 +110,8 @@ func buildBrokers(cfg config.Config, cr creds.File, clk clock.Clock) ([]venueBro
 			if err != nil {
 				return nil, fmt.Errorf("venue %s: %w", v.ID, err)
 			}
-			out = append(out, venueBroker{ID: id, Broker: a, Run: a.Run})
+			out = append(out, venueBroker{ID: id, Env: v.Env, Broker: a, Run: a.Run})
 		case "moomoo":
-			if v.Env != "live" {
-				return nil, fmt.Errorf("venue %s: moomoo is live-only; paper is no longer supported — use a sim venue", v.ID)
-			}
 			accID, err := strconv.ParseUint(v.AccountID, 10, 64)
 			if err != nil {
 				return nil, fmt.Errorf("venue %s: %w", v.ID, err)
@@ -122,33 +120,12 @@ func buildBrokers(cfg config.Config, cr creds.File, clk clock.Clock) ([]venueBro
 			if err != nil {
 				return nil, fmt.Errorf("venue %s: %w", v.ID, err)
 			}
-			out = append(out, venueBroker{ID: id, Broker: a, Run: a.Run})
+			out = append(out, venueBroker{ID: id, Env: v.Env, Broker: a, Run: a.Run})
 		default:
 			return nil, fmt.Errorf("venue %s: unknown broker %q", v.ID, v.Broker)
 		}
 	}
 	return out, nil
-}
-
-// liveMoomooDayLossGap reports whether a live boot has both a configured
-// moomoo venue and a non-zero global MaxDayLoss. moomoo/trd.go's snapshot()
-// hardcodes AccountSnapshot.DayPnL to 0 (Trd_GetFunds has no day-P&L field,
-// and no ledger-derived alternative has been built), so the global MaxDayLoss
-// circuit breaker (exec/gate.go's BreachedDayLoss, which sums every venue's
-// DayPnL) cannot see moomoo-originated losses whenever this returns true.
-// This is an accepted gap, not a bug to fix here — the boot block below uses
-// this predicate only to surface a prominent warning so a live session
-// running moomoo alongside MaxDayLoss doesn't silently assume it's protected.
-func liveMoomooDayLossGap(cfg config.Config) bool {
-	if cfg.Gate.Global.MaxDayLoss <= 0 {
-		return false
-	}
-	for _, v := range cfg.Venues {
-		if v.Broker == "moomoo" {
-			return true
-		}
-	}
-	return false
 }
 
 // rttProber is health.New's unexported prober interface, restated here so
@@ -211,9 +188,8 @@ func firstAlpacaAssetReader(vbs []venueBroker) stockInfoAssetReader {
 	return nil
 }
 
-// resolveActiveVenue and dayLossPolicies are small boot-time runtime wiring
-// helpers. They intentionally use the running venue set, not raw persisted
-// config, so stale UI state cannot target a missing adapter.
+// resolveActiveVenue is retained for old boot/replay tests and persisted-state
+// decoding. Production routing no longer reads the legacy global value.
 type persistedOrderConfig struct {
 	ActiveVenue string `json:"activeVenue"`
 }
@@ -231,16 +207,6 @@ func resolveActiveVenue(raw string, vbs []venueBroker) exec.VenueID {
 		return vbs[0].ID
 	}
 	return ""
-}
-
-func dayLossPolicies(vbs []venueBroker) map[exec.VenueID]exec.DayLossPolicy {
-	policies := make(map[exec.VenueID]exec.DayLossPolicy)
-	for _, vb := range vbs {
-		if vb.Broker != nil && vb.Broker.Capabilities().DayLossActiveVenueOnly {
-			policies[vb.ID] = exec.DayLossPolicy{ActiveVenueOnly: true}
-		}
-	}
-	return policies
 }
 
 // errAlpacaLiveCreds is returned by resolveBackfillAlpacaCreds when the
