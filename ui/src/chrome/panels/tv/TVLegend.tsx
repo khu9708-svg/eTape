@@ -5,10 +5,11 @@ import { INDICATOR_CATALOG, type IndicatorInstance } from "../../../render/chart
 import type { LegendView } from "./legendView";
 import { IconEye, IconEyeOff, IconGear, IconClose, IconChevronDown } from "./tvIcons";
 import { HoverButton } from "../../controls/HoverButton";
+import { formatCompactShares } from "../../format";
 
 export interface TVLegendHandle { update(view: LegendView): void }
 export interface TVLegendProps {
-  chrome: TvChrome; symbol: string; timeframe: string; instances: IndicatorInstance[]; paneOffsets: number[];
+  chrome: TvChrome; symbol: string; timeframe: string; instances: IndicatorInstance[]; floatShares: number | null; paneOffsets: number[];
   rightAxisWidth: number;
   onToggleHidden: (id: string) => void; onEditIndicator: (id: string) => void; onRemoveIndicator: (id: string) => void;
   onClosePane: (paneIndex: number) => void; onToggleCollapsePane: (paneIndex: number) => void;
@@ -24,7 +25,7 @@ const fmtVol = (n: number | null): string => {
   return `${n}`;
 };
 
-export function TVLegend({ chrome, symbol, timeframe, instances, paneOffsets, rightAxisWidth, onToggleHidden, onEditIndicator, onRemoveIndicator, onClosePane, onToggleCollapsePane, legendRef }: TVLegendProps): JSX.Element {
+export function TVLegend({ chrome, symbol, timeframe, instances, floatShares, paneOffsets, rightAxisWidth, onToggleHidden, onEditIndicator, onRemoveIndicator, onClosePane, onToggleCollapsePane, legendRef }: TVLegendProps): JSX.Element {
   const cells = useRef(new Map<string, HTMLElement>());
   const [hovered, setHovered] = useState<string | null>(null);
   const bare = symbol.replace(/^US\./, "");
@@ -103,6 +104,7 @@ export function TVLegend({ chrome, symbol, timeframe, instances, paneOffsets, ri
           <span style={{ color: chrome.muted }}>C</span>{val("c")}
           {val("chg")}
         </div>
+        <div style={{ display: "flex", gap: 6 }}><span style={{ color: chrome.muted }}>Float</span><span data-testid="legend-float" style={{ color: chrome.muted }}>{formatCompactShares(floatShares)}</span></div>
         <div style={{ display: "flex", gap: 6 }}><span style={{ color: chrome.muted }}>Vol</span>{val("vol", chrome.muted)}{val("reported", chrome.muted)}{val("state", chrome.muted)}</div>
         {overlayInstances.map(indicatorRow)}
       </div>

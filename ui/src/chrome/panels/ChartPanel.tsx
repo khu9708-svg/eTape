@@ -1,4 +1,4 @@
-import { useContext, useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { createChart, createTextWatermark, CandlestickSeries, BarSeries, HistogramSeries, LineSeries, AreaSeries, type IChartApi, type ISeriesApi, type Time, type Logical, type LogicalRange, type Coordinate } from "lightweight-charts";
 import type { PanelProps } from "./registry";
@@ -185,6 +185,11 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
     return styleStore.isReady() || !styleStore.isConnected();
   });
   const [chartSymbol, setChartSymbol] = useState(symbol);
+  const floatShares = useSyncExternalStore(
+    (cb) => stores.stockDetail.subscribe(cb),
+    () => stores.stockDetail.detailFor(chartSymbol)?.floatShares ?? null,
+    () => null,
+  );
   const [menu, setMenu] = useState<{ x: number; y: number; clientX: number; clientY: number; drawingId: string | null } | null>(null);
   // The top-bar chart-type switcher was removed (candles-only trading UI); the
   // persisted setting is still honored at mount so old workspaces keep rendering.
@@ -1051,7 +1056,7 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
             onDeleteSelection={() => interactionRef.current?.deleteSelection()}
             onClearAll={clearAllDrawings}
             initialPos={drawingRailPos} onPosChange={(p) => { setDrawingRailPos(p); persist({ drawingRailPos: p }); }} />}
-          <TVLegend chrome={chrome} symbol={chartSymbol} timeframe={timeframe} instances={instances} paneOffsets={paneOffsets}
+          <TVLegend chrome={chrome} symbol={chartSymbol} timeframe={timeframe} instances={instances} floatShares={floatShares} paneOffsets={paneOffsets}
             rightAxisWidth={rightAxisWidth}
             onToggleHidden={toggleIndicatorHidden} onEditIndicator={setSettingsInstanceId} onRemoveIndicator={removeIndicator}
             onClosePane={closePane} onToggleCollapsePane={togglePaneCollapsed}

@@ -761,6 +761,22 @@ describe("ChartPanel", () => {
     expect(commands.sendQuery).toHaveBeenCalledWith("QueryChartWindow", expect.objectContaining({ symbol: "US.NVDA" }));
   });
 
+  it("renders the displayed symbol's Free Float and clears it when switching to an uncached symbol", () => {
+    const { stores, getByTestId, rerenderPinnedSymbol } = renderChart();
+    act(() => stores.stockDetail.apply({ kind: "snapshot", topic: "stock.detail", payload: {
+      symbol: "US.AAPL", floatShares: 12_300_000,
+    } }));
+    expect(getByTestId("legend-float").textContent).toBe("12.3M");
+
+    act(() => stores.stockDetail.apply({ kind: "snapshot", topic: "stock.detail", payload: {
+      symbol: "US.MSFT", floatShares: 950_000,
+    } }));
+    expect(getByTestId("legend-float").textContent).toBe("12.3M");
+
+    act(() => rerenderPinnedSymbol("US.NVDA"));
+    expect(getByTestId("legend-float").textContent).toBe("—");
+  });
+
   it("uses generated 10s display bars for the legend logical index", async () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-07-09T13:30:20Z"));
     try {
