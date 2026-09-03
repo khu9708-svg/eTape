@@ -5,10 +5,11 @@ Drawing models, interaction, persistence, and chart primitives. Inputs: pointer/
 ## Interaction
 
 Persisted Chart Drawings use a Drawing Anchor made from a rounded chart slot and
-price. Loaded slots use their actual bar timestamp; slots in the Future Buffer
-extrapolate from the newest bar by the nominal timeframe. Placement, handle
-movement, and body movement use the same conversion, so a future anchor remains
-attached to that future chart position as incoming bars consume the buffer.
+price. Loaded slots use their actual bar timestamp; blank slots before the oldest
+bar and in the Future Buffer extrapolate from the nearest loaded bar by the
+nominal timeframe. Placement, handle movement, and body movement use the same
+conversion, so blank-space anchors remain attached to their chart positions as
+the viewport changes.
 
 Measure is a session-only drawing layer: it is not written to DrawingStore or
 restored after a reload, symbol switch, or timeframe switch. Drag from the first

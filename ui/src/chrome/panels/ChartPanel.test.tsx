@@ -606,6 +606,33 @@ describe("ChartPanel", () => {
     expect(getByRole("button", { name: "width 1" })).toBeTruthy();
   });
 
+  it("keeps a 10s trendline anchor in blank space before the first loaded bar", async () => {
+    const bars: Bar[] = ["2026-09-03T08:00:00.000Z", "2026-09-03T08:00:10.000Z"].map((bucketStart) => ({
+      symbol: "US.AAPL", timeframe: "10s", bucketStart, o: 0.11, h: 0.11, l: 0.11, c: 0.11, v: 1, inProgress: false,
+    }));
+    const { stores, getByRole, getByTestId } = renderChart("c1", undefined, undefined, { timeframe: "10s" }, {
+      symbol: "US.AAPL", timeframe: "10s", fromMs: Date.parse(bars[0].bucketStart), toMs: Date.parse(bars[1].bucketStart) + 10_000,
+      bars, indicators: [], historyRevision: 1,
+    });
+    await act(async () => {
+      stores.health.apply({ kind: "delta", topic: "sys.events", payload: {
+        seq: 1, ts: "2026-09-03T08:00:20Z", kind: "chart-ready", detail: "US.AAPL",
+      } });
+      await Promise.resolve(); await Promise.resolve();
+    });
+
+    timeScaleApi.coordinateToLogical.mockReturnValueOnce(-1).mockReturnValueOnce(1);
+    fireEvent.click(getByRole("button", { name: "trend line" }));
+    const host = getByTestId("chart-host");
+    fireEvent.pointerDown(host, { button: 0, clientX: -10, clientY: 100 });
+    fireEvent.pointerDown(host, { button: 0, clientX: 10, clientY: 200 });
+
+    expect(stores.drawings.forSymbol("US.AAPL")[0].anchors.map((anchor) => anchor.timeMs)).toEqual([
+      Date.parse(bars[0].bucketStart) - 10_000,
+      Date.parse(bars[1].bucketStart),
+    ]);
+  });
+
   it("does not reset a loaded VWAP when the linked group focuses the displayed symbol", async () => {
     const key = "c1:VWAP-0";
     const point = { timeMs: 1, value: 100.5 };

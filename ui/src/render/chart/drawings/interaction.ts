@@ -230,7 +230,8 @@ export class DrawingInteraction {
   private timeAtLogical(logical: number): number | null {
     const bars = this.ctx.bars();
     if (bars.length === 0 || !Number.isFinite(logical)) return null;
-    const slot = Math.max(0, Math.round(logical));
+    const slot = Math.round(logical);
+    if (slot < 0) return Date.parse(bars[0].bucketStart) + slot * this.ctx.timeframeMs();
     if (slot < bars.length) return Date.parse(bars[slot].bucketStart);
     const last = Date.parse(bars[bars.length - 1].bucketStart);
     return last + (slot - bars.length + 1) * this.ctx.timeframeMs();
