@@ -15,9 +15,8 @@ session needs a real bar before quiet intervals can be filled.
 
 A Volume-Only Bar is a real eligible-volume bucket with no Price-Forming Print.
 It is flat at the prior trusted last-eligible close, retains real volume, and
-keeps ordinary candle styling; the legend labels it `volume only`. TypeScript
-does not infer this state from candle shape or volume. No-Trade Bars remain
-zero-volume synthetic display fills and are labeled separately.
+keeps ordinary candle styling. TypeScript does not infer this state from candle
+shape or volume. No-Trade Bars remain zero-volume synthetic display fills.
 
 When the OpenD link is down, provisional No-Trade Bars are suppressed. A real
 bar marked `gap` confirms a Data Gap since the previous trustworthy real bar;

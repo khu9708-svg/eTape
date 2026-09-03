@@ -46,7 +46,6 @@ export function TVLegend({ chrome, symbol, timeframe, instances, floatShares, pa
         write("l", fmtPrice(v.l), tint); write("c", fmtPrice(v.c), tint);
         write("chg", v.changePct === null ? "" : `${v.changePct >= 0 ? "+" : ""}${v.changePct.toFixed(2)}%`, tint);
         write("vol", fmtVol(v.volume), chrome.muted);
-        write("state", v.barState === "volumeOnly" ? "volume only" : v.barState === "noTrade" ? "no trade" : "", chrome.muted);
         for (const row of v.indicators) {
           row.values.forEach((val, idx) => write(`ind-${row.instanceId}-${idx}`, fmtPrice(val), row.colors[idx]));
           // Always write (even blank) so a stale POSITIVE/NEGATIVE doesn't linger once the
@@ -104,7 +103,7 @@ export function TVLegend({ chrome, symbol, timeframe, instances, floatShares, pa
           {val("chg")}
         </div>
         <div style={{ display: "flex", gap: 6 }}><span style={{ color: chrome.muted }}>Float</span><span data-testid="legend-float" style={{ color: chrome.muted }}>{formatCompactShares(floatShares)}</span></div>
-        <div style={{ display: "flex", gap: 6 }}><span style={{ color: chrome.muted }}>Vol</span>{val("vol", chrome.muted)}{val("state", chrome.muted)}</div>
+        <div style={{ display: "flex", gap: 6 }}><span style={{ color: chrome.muted }}>Vol</span>{val("vol", chrome.muted)}</div>
         {overlayInstances.map(indicatorRow)}
       </div>
       {panes.map((pane) => {
