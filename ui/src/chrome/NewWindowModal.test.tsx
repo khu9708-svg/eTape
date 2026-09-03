@@ -13,18 +13,37 @@ describe("NewWindowModal", () => {
         ? { status: "accepted", value: { version: 1, entries: [{ id: "desk", name: "Desk" }] } }
         : { status: "accepted" }),
     };
-    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const open = vi.spyOn(window, "open").mockReturnValue({} as Window);
+    const onClose = vi.fn();
 
-    render(<ThemeProvider><NewWindowModal open currentId="main" commands={commands} onClose={() => {}} /></ThemeProvider>);
+    render(<ThemeProvider><NewWindowModal open currentId="main" commands={commands} onClose={onClose} /></ThemeProvider>);
     await waitFor(() => expect(screen.getByRole("button", { name: "Monitoring" })).toBeTruthy());
 
     const monitoring = screen.getByRole("button", { name: "Monitoring" });
     expect(monitoring.parentElement?.querySelector("button:nth-of-type(2)")).toBeNull();
     fireEvent.click(monitoring);
     expect(open).toHaveBeenCalledWith(expect.stringContaining("workspace=monitoring"), "etape-workspace-monitoring", expect.stringContaining("popup=yes,width="));
+    expect(onClose).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Desk" }));
     expect(open).toHaveBeenCalledWith(expect.stringContaining("workspace=desk"), "etape-workspace-desk", expect.stringContaining("popup=yes,width="));
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the modal open when the workspace popup is blocked", async () => {
+    const commands = {
+      sendCommand: vi.fn(async (name: string) => name === "GetConfig"
+        ? { status: "accepted", value: { version: 1, entries: [{ id: "desk", name: "Desk" }] } }
+        : { status: "accepted" }),
+    };
+    vi.spyOn(window, "open").mockReturnValue(null);
+    const onClose = vi.fn();
+
+    render(<ThemeProvider><NewWindowModal open currentId="main" commands={commands} onClose={onClose} /></ThemeProvider>);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Desk" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Desk" }));
+
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("creates a workspace in a popup window", async () => {
@@ -36,12 +55,14 @@ describe("NewWindowModal", () => {
     const popup = { location: { href: "" }, close: vi.fn() } as unknown as Window;
     const open = vi.spyOn(window, "open").mockReturnValue(popup);
     vi.spyOn(crypto, "randomUUID").mockReturnValue("123e4567-e89b-12d3-a456-426614174000");
+    const onClose = vi.fn();
 
-    render(<ThemeProvider><NewWindowModal open currentId="main" commands={commands} onClose={() => {}} /></ThemeProvider>);
+    render(<ThemeProvider><NewWindowModal open currentId="main" commands={commands} onClose={onClose} /></ThemeProvider>);
     await waitFor(() => expect(screen.getByRole("button", { name: "Create new" })).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Workspace name"), { target: { value: "Desk" } });
     fireEvent.click(screen.getByRole("button", { name: "Create new" }));
 
     await waitFor(() => expect(open).toHaveBeenCalledWith("about:blank", "_blank", expect.stringContaining("popup=yes,width=")));
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 });

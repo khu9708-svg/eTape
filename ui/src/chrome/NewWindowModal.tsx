@@ -21,6 +21,7 @@ export function NewWindowModal({ open, currentId, commands, workspaceStore, onCl
     { id: MONITORING_WORKSPACE_ID, name: MONITORING_WORKSPACE_NAME },
     ...catalog.entries.filter((entry) => entry.id !== MONITORING_WORKSPACE_ID),
   ];
+  const select = (id: string) => { if (openWorkspaceWindow(id)) onClose(); };
   const create = async () => {
     setError(""); const placeholder = window.open("about:blank", "_blank", workspaceWindowFeatures());
     try {
@@ -32,7 +33,7 @@ export function NewWindowModal({ open, currentId, commands, workspaceStore, onCl
         throw new Error(saved.reason ?? "Could not create empty workspace.");
       }
       setCatalog(next); const url = workspaceUrl(id);
-      if (placeholder) placeholder.location.href = url; else setError(`Popup blocked — open ${url} manually.`);
+      if (placeholder) { placeholder.location.href = url; onClose(); } else setError(`Popup blocked — open ${url} manually.`);
       setName("");
     } catch (e) { placeholder?.close(); setError(e instanceof Error ? e.message : "Could not create window."); }
   };
@@ -53,7 +54,7 @@ export function NewWindowModal({ open, currentId, commands, workspaceStore, onCl
     });
   };
   return <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,.5)", display: "grid", placeItems: "center" }}><div onClick={(e) => e.stopPropagation()} style={{ width: 460, padding: 18, background: palette.surface }}>
-    <h3>New window</h3>{entries.sort((a,b)=>a.name.localeCompare(b.name)).map((e)=><div key={e.id} style={{display:"flex",gap:8,margin:6}}><Button onClick={()=>openWorkspaceWindow(e.id)}>{e.name}</Button>{e.id !== MONITORING_WORKSPACE_ID && <><Button onClick={()=>void rename(e.id,e.name)}>Rename</Button><Button disabled={!navigator.locks || e.id===currentId} onClick={()=>void remove(e.id)}>Delete</Button></>}</div>)}
+    <h3>New window</h3>{entries.sort((a,b)=>a.name.localeCompare(b.name)).map((e)=><div key={e.id} style={{display:"flex",gap:8,margin:6}}><Button onClick={()=>select(e.id)}>{e.name}</Button>{e.id !== MONITORING_WORKSPACE_ID && <><Button onClick={()=>void rename(e.id,e.name)}>Rename</Button><Button disabled={!navigator.locks || e.id===currentId} onClick={()=>void remove(e.id)}>Delete</Button></>}</div>)}
     <div style={{display:"flex",gap:8,marginTop:16}}><input aria-label="Workspace name" value={name} onChange={(e)=>setName(e.target.value)} maxLength={64}/><Button onClick={()=>void create()}>Create new</Button></div>{error&&<p role="alert">{error}</p>}
   </div></div>;
 }
