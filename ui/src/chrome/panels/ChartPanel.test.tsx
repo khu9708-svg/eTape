@@ -48,7 +48,7 @@ import { Scheduler } from "../../render/Scheduler";
 import { browserRaf, type Surface } from "../../render/surface";
 import { LinkGroups, BroadcastChannelBus } from "../linkGroups";
 import type { PanelConfig } from "../workspace";
-import type { AckMsg, Bar, DeltaMsg, SysEvent, Tick } from "../../wire/contract";
+import type { AckMsg, Bar, DeltaMsg, SysEvent } from "../../wire/contract";
 import { DEFAULT_CHART_SETTINGS } from "./tv/ChartSettingsDialog";
 import { FakeDrawingBus, FakeDrawingBusHub } from "../../../test/fakes";
 import { perf } from "../../perf/PerfMonitor";
@@ -112,13 +112,6 @@ function pushLiveBar(stores: ReturnType<typeof makeStores>, symbol: string, time
   const bar: Bar = { symbol, timeframe, bucketStart, o, h: Math.max(o, c) + 0.1, l: Math.min(o, c) - 0.1, c, v: 100, inProgress };
   const msg: DeltaMsg = { kind: "delta", topic: "md.bars", key: `${symbol}:${timeframe}`, payload: bar };
   stores.bars.apply(msg);
-}
-
-function pushTapeTick(stores: ReturnType<typeof makeStores>, symbol: string, price: number, ts = "2026-07-09T13:31:15.000Z"): void {
-  const tick: Tick = { symbol, price, size: 30, direction: "BUY", transactionType: "oddLot", significance: "none",
-    condition: "oddLot", rawType: 1, rawTypeSign: 0, deliverySource: "realtime", rangeEligible: false, lastEligible: false,
-    volumeEligible: true, ts };
-  stores.tape.apply({ kind: "delta", topic: "md.tape", key: symbol, payload: [tick] });
 }
 
 // Mounts ChartPanel with a scheduler.register spy that captures the registered
@@ -799,142 +792,6 @@ describe("ChartPanel", () => {
     }
   });
 
-  it("shows the newest Reported Price beside the trusted 10s close without changing OHLC", async () => {
-    const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-07-09T13:31:15Z"));
-    try {
-      const bar: Bar = { symbol: "US.AAPL", timeframe: "10s", bucketStart: "2026-07-09T13:31:00Z", o: 8.2, h: 8.4, l: 8.1, c: 8.3562, v: 112, inProgress: false };
-      const { stores, getSurface, getByTestId } = renderChartCapturingSurface({ timeframe: "10s" }, {
-        symbol: "US.AAPL", timeframe: "10s", fromMs: Date.parse(bar.bucketStart), toMs: Date.parse(bar.bucketStart) + 1,
-        bars: [bar], indicators: [], historyRevision: 1,
-      });
-      act(() => stores.health.apply({ kind: "delta", topic: "sys.events", payload: {
-        seq: 1, ts: "2026-08-03T01:00:00Z", kind: "chart-ready", detail: "US.AAPL",
-      } }));
-      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-      pushTapeTick(stores, "US.AAPL", 8.4638);
-      act(() => { getSurface().paint(); });
-      expect(getByTestId("legend-c").textContent).toContain("8.36");
-      expect(getByTestId("legend-reported").textContent).toBe("Reported 8.464");
-    } finally {
-      now.mockRestore();
-    }
-  });
-
-  it("suppresses Reported Price when the trusted and reported values match at three decimals", async () => {
-    const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-07-09T13:31:15Z"));
-    try {
-      const bar: Bar = { symbol: "US.AAPL", timeframe: "10s", bucketStart: "2026-07-09T13:31:00Z", o: 8.2, h: 8.4, l: 8.1, c: 8.3562, v: 112, inProgress: false };
-      const { stores, getSurface, getByTestId } = renderChartCapturingSurface({ timeframe: "10s" }, {
-        symbol: "US.AAPL", timeframe: "10s", fromMs: Date.parse(bar.bucketStart), toMs: Date.parse(bar.bucketStart) + 1,
-        bars: [bar], indicators: [], historyRevision: 1,
-      });
-      act(() => stores.health.apply({ kind: "delta", topic: "sys.events", payload: {
-        seq: 1, ts: "2026-08-03T01:00:00Z", kind: "chart-ready", detail: "US.AAPL",
-      } }));
-      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-      pushTapeTick(stores, "US.AAPL", 8.3564);
-      act(() => { getSurface().paint(); });
-      expect(getByTestId("legend-reported").textContent).toBe("");
-    } finally {
-      now.mockRestore();
-    }
-  });
-
-  it("clears Reported Price when a later eligible bar converges with the tape", async () => {
-    const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-07-09T13:31:15Z"));
-    try {
-      const bar: Bar = { symbol: "US.AAPL", timeframe: "10s", bucketStart: "2026-07-09T13:31:00Z", o: 8.2, h: 8.4, l: 8.1, c: 8.3562, v: 112, inProgress: false };
-      const { stores, getSurface, getByTestId } = renderChartCapturingSurface({ timeframe: "10s" }, {
-        symbol: "US.AAPL", timeframe: "10s", fromMs: Date.parse(bar.bucketStart), toMs: Date.parse(bar.bucketStart) + 1,
-        bars: [bar], indicators: [], historyRevision: 1,
-      });
-      act(() => stores.health.apply({ kind: "delta", topic: "sys.events", payload: {
-        seq: 1, ts: "2026-08-03T01:00:00Z", kind: "chart-ready", detail: "US.AAPL",
-      } }));
-      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-      pushTapeTick(stores, "US.AAPL", 8.4638);
-      act(() => { getSurface().paint(); });
-      expect(getByTestId("legend-reported").textContent).toBe("Reported 8.464");
-
-      pushLiveBar(stores, "US.AAPL", "10s", 8.4, 8.4709, false, bar.bucketStart);
-      pushTapeTick(stores, "US.AAPL", 8.4709);
-      expect(stores.bars.series("US.AAPL", "10s").at(-1)?.c).toBe(8.4709);
-      act(() => { getSurface().paint(); });
-      expect(getByTestId("legend-reported").textContent).toBe("");
-    } finally {
-      now.mockRestore();
-    }
-  });
-
-  it("keeps Reported Price live-context-only and independent from crosshair OHLC", async () => {
-    const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-07-09T13:31:15Z"));
-    try {
-      const first: Bar = { symbol: "US.AAPL", timeframe: "10s", bucketStart: "2026-07-09T13:30:50Z", o: 8.1, h: 8.3, l: 8, c: 8.2, v: 80, inProgress: false };
-      const latest: Bar = { ...first, bucketStart: "2026-07-09T13:31:00Z", o: 8.2, h: 8.4, c: 8.3562, v: 112 };
-      const { stores, getSurface, getByTestId } = renderChartCapturingSurface({ timeframe: "10s" }, {
-        symbol: "US.AAPL", timeframe: "10s", fromMs: Date.parse(first.bucketStart), toMs: Date.parse(latest.bucketStart) + 1,
-        bars: [first, latest], indicators: [], historyRevision: 1,
-      });
-      act(() => stores.health.apply({ kind: "delta", topic: "sys.events", payload: {
-        seq: 1, ts: "2026-08-03T01:00:00Z", kind: "chart-ready", detail: "US.AAPL",
-      } }));
-      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-      pushTapeTick(stores, "US.AAPL", 8.4638);
-      act(() => { getSurface().paint(); });
-      const crosshair = chartApi.subscribeCrosshairMove.mock.calls[0][0] as (param: { logical?: number }) => void;
-      act(() => crosshair({ logical: 0 }));
-      expect(getByTestId("legend-c").textContent).toContain("8.20");
-      expect(getByTestId("legend-reported").textContent).toBe("Reported 8.464");
-    } finally {
-      now.mockRestore();
-    }
-  });
-
-  it("shows Reported Price in Live View and Future Buffer, but hides it in Historical View", async () => {
-    const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-07-09T13:31:15Z"));
-    try {
-      const bar: Bar = { symbol: "US.AAPL", timeframe: "10s", bucketStart: "2026-07-09T13:31:00Z", o: 8.2, h: 8.4, l: 8.1, c: 8.3562, v: 112, inProgress: false };
-      const { stores, getSurface, getByTestId } = renderChartCapturingSurface({ timeframe: "10s" }, {
-        symbol: "US.AAPL", timeframe: "10s", fromMs: Date.parse(bar.bucketStart), toMs: Date.parse(bar.bucketStart) + 1,
-        bars: [bar], indicators: [], historyRevision: 1,
-      });
-      act(() => stores.health.apply({ kind: "delta", topic: "sys.events", payload: {
-        seq: 1, ts: "2026-08-03T01:00:00Z", kind: "chart-ready", detail: "US.AAPL",
-      } }));
-      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-      pushTapeTick(stores, "US.AAPL", 8.4638);
-      act(() => { getSurface().paint(); });
-      expect(getByTestId("legend-reported").textContent).toBe("Reported 8.464");
-      getSurface().isDirty();
-
-      const host = getByTestId("chart-host");
-      timeScaleApi.scrollPosition.mockReturnValue(8);
-      fireEvent.pointerDown(host, { button: 0, pointerType: "mouse", clientX: 0, clientY: 0 });
-      fireEvent.pointerMove(host, { buttons: 1, pointerType: "mouse", clientX: 4, clientY: 0 });
-      expect(getSurface().isDirty()).toBe(true);
-      act(() => { getSurface().paint(); });
-      expect(getByTestId("legend-reported").textContent).toBe("Reported 8.464");
-      getSurface().isDirty();
-
-      timeScaleApi.scrollPosition.mockReturnValue(-1);
-      fireEvent.pointerDown(host, { button: 0, pointerType: "mouse", clientX: 4, clientY: 0 });
-      fireEvent.pointerMove(host, { buttons: 1, pointerType: "mouse", clientX: 8, clientY: 0 });
-      expect(getSurface().isDirty()).toBe(true);
-      act(() => { getSurface().paint(); });
-      expect(getByTestId("legend-reported").textContent).toBe("");
-      getSurface().isDirty();
-
-      timeScaleApi.scrollPosition.mockReturnValue(0);
-      fireEvent.pointerDown(host, { button: 0, pointerType: "mouse", clientX: 8, clientY: 0 });
-      fireEvent.pointerMove(host, { buttons: 1, pointerType: "mouse", clientX: 12, clientY: 0 });
-      expect(getSurface().isDirty()).toBe(true);
-      act(() => { getSurface().paint(); });
-      expect(getByTestId("legend-reported").textContent).toBe("Reported 8.464");
-    } finally {
-      now.mockRestore();
-    }
-  });
-
   it("camera button calls the chart's takeScreenshot", () => {
     const { getByRole } = renderChart();
     fireEvent.click(getByRole("button", { name: "screenshot" }));
@@ -1566,20 +1423,6 @@ describe("ChartPanel", () => {
     // chart's active instances) must NOT dirty it.
     stores.indicators.apply({ kind: "delta", topic: "md.indicator", key: "other-panel:EMA-0", payload: { timeMs: Date.now(), value: 1 } });
     expect(getSurface().isDirty()).toBe(false);
-  });
-
-  it("dirties only a live 10s chart for its pinned symbol's tape revision", () => {
-    const tenSecond = renderChartCapturingSurface({ timeframe: "10s" });
-    tenSecond.getSurface().isDirty();
-    pushTapeTick(tenSecond.stores, "US.NVDA", 8.4);
-    expect(tenSecond.getSurface().isDirty()).toBe(false);
-    pushTapeTick(tenSecond.stores, "US.AAPL", 8.5);
-    expect(tenSecond.getSurface().isDirty()).toBe(true);
-
-    const oneMinute = renderChartCapturingSurface({ timeframe: "1m" });
-    oneMinute.getSurface().isDirty();
-    pushTapeTick(oneMinute.stores, "US.AAPL", 8.5);
-    expect(oneMinute.getSurface().isDirty()).toBe(false);
   });
 
   it("dirties a 10s chart when the wall-clock bucket advances without a store revision", () => {

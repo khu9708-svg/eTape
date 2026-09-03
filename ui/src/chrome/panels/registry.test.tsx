@@ -48,8 +48,8 @@ describe("Task 8: open-orders folds into the merged account panel", () => {
 });
 
 describe("chart panel market-data topics", () => {
-  it("includes tape updates so live Reported Price reaches the chart", () => {
-    expect(PANELS["chart"].topics).toEqual(["md.bars", "md.indicator", "exec.fills", "md.tape", "stock.detail"]);
+  it("subscribes only to data rendered by the chart", () => {
+    expect(PANELS["chart"].topics).toEqual(["md.bars", "md.indicator", "exec.fills", "stock.detail"]);
     expect(PANELS["chart"].demand).toBe("chart");
   });
 });

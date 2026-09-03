@@ -46,6 +46,7 @@ describe("TVLegend", () => {
     expect(screen.getByTestId("legend-vol").textContent).toContain("1.24M");
     expect(screen.getByTestId("legend-ind-e1-0").textContent).toContain("11.3");
     expect(screen.getByTestId("legend-float").textContent).toBe("12.3M");
+    expect(screen.queryByTestId("legend-reported")).toBeNull();
   });
 
   it("renders Free Float above Volume with compact Scanner formatting", () => {
@@ -64,16 +65,6 @@ describe("TVLegend", () => {
     const hRef: { current: TVLegendHandle | null } = { current: null };
     render(<Harness onToggle={() => {}} hRef={hRef} floatShares={floatShares} />);
     expect(screen.getByTestId("legend-float").textContent).toBe(expected);
-  });
-
-  it("writes and clears the display-only Reported Price imperatively", () => {
-    const hRef: { current: TVLegendHandle | null } = { current: null };
-    render(<Harness onToggle={() => {}} hRef={hRef} />);
-    const view = { o: 10, h: 12, l: 9.5, c: 11.5, changePct: 1.2, up: true, volume: 100, barState: null, indicators: [] };
-    hRef.current!.update({ ...view, reportedPrice: "Reported 8.464" });
-    expect(screen.getByTestId("legend-reported").textContent).toBe("Reported 8.464");
-    hRef.current!.update(view);
-    expect(screen.getByTestId("legend-reported").textContent).toBe("");
   });
 
   it("reveals hover controls and toggles visibility", () => {

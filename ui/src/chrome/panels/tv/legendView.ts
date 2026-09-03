@@ -14,7 +14,6 @@ export interface LegendIndicatorRow {
 export interface LegendView {
   o: number | null; h: number | null; l: number | null; c: number | null; changePct: number | null; up: boolean;
   volume: number | null; barState: "volumeOnly" | "noTrade" | null; indicators: LegendIndicatorRow[];
-  reportedPrice?: string;
 }
 
 type LegendBar = Bar & { synthetic?: boolean; dataGap?: boolean };

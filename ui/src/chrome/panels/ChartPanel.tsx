@@ -14,7 +14,7 @@ import { timeframeToMs } from "../../render/chart/drawings/geometry";
 import { bucketStartMs, type Timeframe } from "../../render/chart/barBucket";
 import { aggregateFillMarkers } from "../../render/chart/fillAggregate";
 import { isIntradayTimeframe, latestEligibleCountdownBar } from "../../render/chart/barClose";
-import { formatPrice, QUOTE_DECIMALS } from "../../render/format";
+import { formatPrice } from "../../render/format";
 import type { Palette } from "../../render/palette";
 import { useTheme } from "../ThemeProvider";
 import { DEFAULT_RECT_FILL_OPACITY, type Drawing } from "../../render/chart/drawings/model";
@@ -576,17 +576,7 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
     const updateLegend = () => {
       const bars = controller.displayBars();
       const view = computeLegendView(bars, stores.indicators, instancesRef.current, paletteRef.current, crosshairLogicalRef.current);
-      const tenSecond = tfRef.current === "10s";
-      const rawBars = tenSecond && chartSnapshotLoaded ? stores.bars.series(currentSymbol, tfRef.current) : [];
-      const eligible = tenSecond
-        ? latestEligibleCountdownBar(rawBars, "10s", stores.marketClock.nowMs())
-        : null;
-      const reported = tenSecond ? stores.tape.lastTick(currentSymbol) : undefined;
-      const eligiblePrice = eligible && Number.isFinite(eligible.c) ? formatPrice(eligible.c, QUOTE_DECIMALS) : null;
-      const reportedPrice = reported && Number.isFinite(reported.price) ? formatPrice(reported.price, QUOTE_DECIMALS) : null;
-      const reportedText = viewportModeRef.current !== "historical" && eligiblePrice && reportedPrice && eligiblePrice !== reportedPrice
-        ? `Reported ${reportedPrice}` : undefined;
-      legendRef.current?.update(reportedText === undefined ? view : { ...view, reportedPrice: reportedText });
+      legendRef.current?.update(view);
     };
     // subscribeCrosshairMove has the same unthrottled-input-rate shape as
     // subscribeVisibleLogicalRangeChange above: it fires on every native
@@ -613,8 +603,6 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
     let lastIndicatorsRev = -1;
     let lastFillsRev = -1;
     let lastDrawingsRev = -1;
-    let lastTapeRev = -1;
-    let lastViewportMode: ManagedViewportMode = "live";
     let lastWallBucket = -1;
     let lastOpenDStatus = "";
     let lastBoundaryTraceKey = "";
@@ -649,8 +637,6 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
         }
         const fillsRev = stores.fills.getRev();
         const drawingsRev = stores.drawings.getRev();
-        const tapeRev = tfRef.current === "10s" ? stores.tape.getRev(currentSymbol) : -1;
-        const viewportMode = viewportModeRef.current;
         const openDStatus = tfRef.current === "10s"
           ? stores.health.getSnapshot().links.find((link) => link.link === "engine-moomoo")?.status ?? ""
           : "";
@@ -659,14 +645,11 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
           ? Math.floor(stores.marketClock.nowMs() / timeframeToMs(tfRef.current as Timeframe))
           : -1;
         const changed = barsRev !== lastBarsRev || indicatorsRev !== lastIndicatorsRev || fillsRev !== lastFillsRev || drawingsRev !== lastDrawingsRev
-          || tapeRev !== lastTapeRev || viewportMode !== lastViewportMode || paneSig !== lastPaneSig
-          || wallBucket !== lastWallBucket || openDStatus !== lastOpenDStatus || forceRepaintRef.current;
+          || paneSig !== lastPaneSig || wallBucket !== lastWallBucket || openDStatus !== lastOpenDStatus || forceRepaintRef.current;
         lastBarsRev = barsRev;
         lastIndicatorsRev = indicatorsRev;
         lastFillsRev = fillsRev;
         lastDrawingsRev = drawingsRev;
-        lastTapeRev = tapeRev;
-        lastViewportMode = viewportMode;
         lastPaneSig = paneSig;
         lastWallBucket = wallBucket;
         lastOpenDStatus = openDStatus;
