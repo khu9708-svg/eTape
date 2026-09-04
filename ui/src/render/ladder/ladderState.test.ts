@@ -10,6 +10,19 @@ import {
 } from "./ladderState";
 import { paintLadder } from "./paintLadder";
 
+function recordingContext(): { ctx: CanvasRenderingContext2D; draws: Array<{ text: string; font: string }> } {
+  const draws: Array<{ text: string; font: string }> = [];
+  let font = "";
+  const ctx = {
+    clearRect() {}, fillRect() {},
+    fillText(text: string) { draws.push({ text, font }); },
+    beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, setLineDash() {},
+    get font() { return font; },
+    set font(value: string) { font = value; },
+  } as unknown as CanvasRenderingContext2D;
+  return { ctx, draws };
+}
+
 function book(overrides: Partial<Book> = {}): Book {
   return {
     symbol: "US.AAPL",
@@ -283,5 +296,75 @@ describe("buildLadderState", () => {
     expect(texts).toContain("99.000 × 101.000 · spread 2.000");
     expect(texts).toContain("LULD");
     expect(dashed).toBe(0);
+  });
+});
+
+describe("Average-Entry Row", () => {
+  const palette = getPalette("light");
+  const base = { symbol: "US.AAPL", book: book(), orders: [], flash: null, last: null, nowMs: 0, width: 300, height: 480, palette };
+
+  it("matches a valid exact real row and bolds its price and size", () => {
+    const state = buildLadderState({ ...base, averageEntryPrice: 3.49 });
+    expect(state.averageEntryPrice).toBe(3.49);
+    expect(state.averageEntryRowVisible).toBe(true);
+
+    const { ctx, draws } = recordingContext();
+    paintLadder(ctx, state);
+    expect(draws.filter(({ font }) => font.startsWith("700 11px")).map(({ text }) => text)).toEqual(["300", "3.490"]);
+  });
+
+  it("bolds both real sides when a transient crossed book has the same exact price", () => {
+    const state = buildLadderState({
+      ...base,
+      book: book({
+        bids: [{ price: 3.49, size: 300 }, { price: 3.48, size: 200 }],
+        asks: [{ price: 3.49, size: 400 }, { price: 3.52, size: 100 }],
+      }),
+      averageEntryPrice: 3.49,
+    });
+    expect(state.averageEntryRowVisible).toBe(true);
+
+    const { ctx, draws } = recordingContext();
+    paintLadder(ctx, state);
+    expect(draws.filter(({ font }) => font.startsWith("700 11px")).map(({ text }) => text))
+      .toEqual(["300", "3.490", "3.490", "400"]);
+  });
+
+  it("ignores invalid bases and virtual LULD boundary rows", () => {
+    for (const averageEntryPrice of [undefined, null, 0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const state = buildLadderState(averageEntryPrice === undefined ? base : { ...base, averageEntryPrice });
+      expect(state.averageEntryPrice).toBeNull();
+      expect(state.averageEntryRowVisible).toBe(false);
+    }
+
+    const state = buildLadderState({
+      ...base,
+      book: book({
+        bids: [{ price: 3.49, size: 300 }, { price: 3.47, size: 200 }],
+        estimatedLuld: luld({ lower: 3.48, upper: 3.515 }),
+      }),
+      averageEntryPrice: 3.48,
+    });
+    expect(state.averageEntryPrice).toBe(3.48);
+    expect(state.averageEntryRowVisible).toBe(false);
+    const { ctx, draws } = recordingContext();
+    paintLadder(ctx, state);
+    expect(draws.some(({ text, font }) => text === "3.480" && font.startsWith("700 "))).toBe(false);
+  });
+
+  it("reports the cue only while the exact real row is visible", () => {
+    const deep = book({
+      bids: Array.from({ length: 5 }, (_, i) => ({ price: 100 - i, size: 10 })),
+      asks: [],
+    });
+    const offscreen = buildLadderState({ ...base, book: deep, levels: 5, height: 80, averageEntryPrice: 96 });
+    expect(offscreen.averageEntryRowVisible).toBe(false);
+    expect(luldAccessibleText(offscreen.symbol, offscreen.luld, offscreen.averageEntryRowVisible))
+      .not.toContain("Average-Entry Row");
+
+    const visible = buildLadderState({ ...base, book: deep, levels: 5, height: 80, rowOffset: 3, averageEntryPrice: 96 });
+    expect(visible.averageEntryRowVisible).toBe(true);
+    expect(luldAccessibleText(visible.symbol, visible.luld, visible.averageEntryRowVisible))
+      .toContain("Average-Entry Row visible");
   });
 });

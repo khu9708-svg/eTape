@@ -131,7 +131,7 @@ export const PANELS: Record<string, PanelDef> = {
   },
   "ladder": {
     component: LadderPanel,
-    topics: ["md.book", "md.tape", "exec.orders"],
+    topics: ["md.book", "md.tape", "exec.orders", "exec.positions"],
     title: "DOM Ladder",
     glyph: "≡",
     description: "Configurable 1–60 level depth, working orders",

@@ -132,7 +132,8 @@ function drawSide(
   }
 
   // price near the divider (market-direction color), size at the outer edge
-  ctx.font = `11px ${FONTS.mono}`;
+  const isAverageEntry = s.averageEntryPrice !== null && row.price === s.averageEntryPrice;
+  ctx.font = `${isAverageEntry ? "700 " : ""}11px ${FONTS.mono}`;
   ctx.textBaseline = "middle";
   const midY = y + LADDER_ROW_H / 2;
   if (side === "bid") {

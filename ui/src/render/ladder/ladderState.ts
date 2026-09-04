@@ -62,6 +62,8 @@ export interface LadderPaintState {
   decimals: number;
   spread: number | null;
   luld: EstimatedLULD | null;
+  averageEntryPrice: number | null;
+  averageEntryRowVisible: boolean;
   last: LastTrade | null;
   flash: TradeFlash | null;
   orders: OrderMark[];
@@ -89,6 +91,10 @@ export function normalizeLadderLevels(value: unknown): number {
 
 function normalizeRowOffset(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
+function normalizeAverageEntryPrice(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 }
 
 function accumulate(levels: BookLevel[], count: number): LadderRow[] {
@@ -168,6 +174,20 @@ export function clampLadderOffset(offset: number, maxOffset: number): number {
   return Math.min(max, normalizeRowOffset(offset));
 }
 
+function hasVisibleAverageEntryRow(
+  rows: LadderEntry[],
+  fallback: LULDBoundaryRow | null,
+  price: number | null,
+  rowOffset: number,
+  visibleRows: number,
+): boolean {
+  if (price === null || visibleRows <= 0) return false;
+  const logicalRows = Math.max(0, visibleRows - (fallback ? 1 : 0));
+  return rows.some((row, index) =>
+    index >= rowOffset && index - rowOffset < logicalRows && !isLULDBoundaryRow(row) && row.price === price,
+  );
+}
+
 /**
  * Display-only projection of working orders onto the ladder: an order marks the
  * ladder iff it names this symbol, is in a working state, and carries a positive
@@ -211,12 +231,13 @@ function luldValues(luld: EstimatedLULD): string {
   return `${luld.lower.toFixed(2)}–${luld.upper.toFixed(2)}`;
 }
 
-export function luldAccessibleText(symbol: string, luld: EstimatedLULD | null | undefined): string {
-  if (!luld) return `DOM ladder ${symbol}`;
+export function luldAccessibleText(symbol: string, luld: EstimatedLULD | null | undefined, averageEntryRowVisible = false): string {
+  const averageEntry = averageEntryRowVisible ? "; Average-Entry Row visible" : "";
+  if (!luld) return `DOM ladder ${symbol}${averageEntry}`;
   const values = luld.state === "estimated" || luld.state === "frozen" ? `; values ${luldValues(luld)}` : "";
   const registry = luld.registryAsOf ? `; registry as of ${luld.registryAsOf}` : "";
   const reason = luld.reason ? `; reason ${luldReason(luld.reason)}` : "";
-  return `DOM ladder ${symbol}; Estimated LULD state ${luld.state}${values}; tier ${luld.tier}${registry}${reason}`;
+  return `DOM ladder ${symbol}; Estimated LULD state ${luld.state}${values}; tier ${luld.tier}${registry}${reason}${averageEntry}`;
 }
 
 export function buildLadderState(args: {
@@ -229,11 +250,15 @@ export function buildLadderState(args: {
   width: number;
   height: number;
   palette: Palette;
+  averageEntryPrice?: number | null;
   levels?: unknown;
   rowOffset?: number;
 }): LadderPaintState {
   const entitled = entitledForDepth(args.symbol);
   const sides = buildLadderSides(entitled ? args.book : undefined, args.levels);
+  const rowOffset = normalizeRowOffset(args.rowOffset);
+  const averageEntryPrice = normalizeAverageEntryPrice(args.averageEntryPrice);
+  const visibleRows = visibleLadderRows(args.height);
   const spread = entitled && args.book?.asks[0] && args.book?.bids[0]
     ? args.book.asks[0].price - args.book.bids[0].price
     : null;
@@ -247,13 +272,16 @@ export function buildLadderState(args: {
     decimals: QUOTE_DECIMALS,
     spread,
     luld: args.book?.estimatedLuld ?? null,
+    averageEntryPrice,
+    averageEntryRowVisible: hasVisibleAverageEntryRow(sides.bids, sides.bidFallback, averageEntryPrice, rowOffset, visibleRows)
+      || hasVisibleAverageEntryRow(sides.asks, sides.askFallback, averageEntryPrice, rowOffset, visibleRows),
     last: args.last,
     flash: args.flash,
     orders: workingOrderMarks(args.orders, args.symbol),
     nowMs: args.nowMs,
     width: args.width,
     height: args.height,
-    rowOffset: normalizeRowOffset(args.rowOffset),
+    rowOffset,
     palette: args.palette,
   };
 }

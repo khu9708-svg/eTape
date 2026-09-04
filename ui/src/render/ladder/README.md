@@ -8,6 +8,15 @@ and unpriced values add no visual row. Boundary rows use the warning palette,
 have no depth bar, size, order mark, or trade flash, and are never dashed
 markers or order/risk controls.
 
+When a Link Group has a selected Execution Venue, a non-flat Open Position for
+the ladder symbol with a finite positive Average Entry Price can project an
+Average-Entry Row cue. The cue uses exact numeric equality against ordinary
+real bid or ask rows, so both sides may be bold during a crossed or stale book;
+pinned ladders, NET/null-venue rows, invalid or flat positions, and prices not
+present in the real book produce no cue. Only the existing 11px mono price and
+size text is bold; depth bars, colors, flashes, working-order marks, ordering,
+and scroll position are unchanged. LULD Boundary Rows never qualify.
+
 Configured Depth counts real price levels only. An in-range boundary is inserted
 at its sorted price and scrolls with that side. A boundary beyond Configured
 Depth is shown as a plain bottom-slot fallback on its own side; that slot can
@@ -19,5 +28,8 @@ state changes. Book and LULD data never passes through React state.
 Canvas DOM ladder painter. Inputs: order-book/quote state and viewport; output:
 price-level canvas. U.S. books can project 1–60 configured real levels plus
 virtual boundary rows onto a viewport-sized canvas with a logical row offset;
-render directly from store snapshots, coalesced per frame. Test:
+render directly from store snapshots, coalesced per frame. The Average-Entry Row
+cue follows the same logical scroll window: the canvas accessible name includes
+`Average-Entry Row visible` only while an exact matching real row is visible;
+offscreen and nonmatching bases add no accessibility text. Test:
 `npm test -- ladder`.

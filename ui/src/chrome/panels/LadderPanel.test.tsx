@@ -6,8 +6,8 @@ import { LadderPanel } from "./LadderPanel";
 import { makeStores } from "../../data/registry";
 import { Scheduler } from "../../render/Scheduler";
 import { browserRaf, type Surface } from "../../render/surface";
-import { LinkGroups, BroadcastChannelBus } from "../linkGroups";
-import type { AckMsg } from "../../wire/contract";
+import { LinkGroups, BroadcastChannelBus, type LinkGroup } from "../linkGroups";
+import type { AckMsg, PositionRow } from "../../wire/contract";
 
 const paintedLadders = vi.hoisted(() => ({ states: [] as unknown[] }));
 vi.mock("../../render/ladder/paintLadder", () => ({
@@ -22,7 +22,7 @@ beforeEach(() => {
   cleanup();
 });
 
-function renderLadder(settings: Record<string, unknown> = { symbol: "US.AAPL" }, height = 480) {
+function renderLadder(settings: Record<string, unknown> = { symbol: "US.AAPL" }, height = 480, group: LinkGroup = "green") {
   const stores = makeStores();
   const scheduler = new Scheduler(browserRaf, () => {});
   let surface: Surface | undefined;
@@ -33,7 +33,7 @@ function renderLadder(settings: Record<string, unknown> = { symbol: "US.AAPL" },
     return off;
   });
   const linkGroups = new LinkGroups(new BroadcastChannelBus(), () => {});
-  const config = { id: "t-ladder", panelId: "ladder", group: "green" as const, settings };
+  const config = { id: "t-ladder", panelId: "ladder", group, settings };
   const renderPanel = (panelHeight: number) => (
     <ThemeProvider>
       <LadderPanel config={config} stores={stores} scheduler={scheduler} width={300} height={panelHeight}
@@ -44,6 +44,23 @@ function renderLadder(settings: Record<string, unknown> = { symbol: "US.AAPL" },
   const utils = render(renderPanel(height));
   return { ...utils, stores, linkGroups, surface: () => surface!, off, onConfigChange,
     resize: (panelHeight: number) => utils.rerender(renderPanel(panelHeight)) };
+}
+
+function applyEntryBook(stores: ReturnType<typeof makeStores>): void {
+  stores.book.apply({
+    kind: "snapshot", topic: "md.book",
+    payload: {
+      symbol: "US.AAPL", bids: [{ price: 3.49, size: 300 }], asks: [{ price: 3.51, size: 400 }], ts: "t",
+    },
+  });
+}
+
+function position(overrides: Partial<PositionRow> = {}): PositionRow {
+  return { venue: "alpaca-paper", symbol: "US.AAPL", qty: 100, avgPrice: 3.49, unrealizedPnl: 0, dayBasis: 0, ...overrides };
+}
+
+function publishPositions(stores: ReturnType<typeof makeStores>, rows: PositionRow[]): void {
+  stores.exec.apply({ kind: "snapshot", topic: "exec.positions", payload: rows });
 }
 
 function applyDeepBook(stores: ReturnType<typeof makeStores>, symbol = "US.AAPL"): void {
@@ -179,6 +196,62 @@ describe("LadderPanel", () => {
     expect(container.querySelector("canvas")?.getAttribute("aria-label")).toContain("values 95.00–105.00");
     expect(container.querySelector("canvas")?.getAttribute("aria-label")).toContain("tier T1");
     expect(container.querySelector("canvas")?.getAttribute("aria-label")).toContain("registry as of 2026-07-01");
+  });
+
+  it("publishes the selected venue's Average-Entry Row state and accessible name", () => {
+    const { stores, surface, linkGroups, container } = renderLadder();
+    linkGroups.focusVenue("green", "alpaca-paper");
+    applyEntryBook(stores);
+    publishPositions(stores, [position()]);
+
+    surface().paint();
+    const state = paintedLadders.states.at(-1) as { averageEntryPrice: number | null; averageEntryRowVisible: boolean };
+    expect(state.averageEntryPrice).toBe(3.49);
+    expect(state.averageEntryRowVisible).toBe(true);
+    expect(container.querySelector("canvas")?.getAttribute("aria-label")).toContain("Average-Entry Row visible");
+  });
+
+  it("ignores an unrelated venue and a pinned panel", () => {
+    const grouped = renderLadder();
+    grouped.linkGroups.focusVenue("green", "alpaca-paper");
+    applyEntryBook(grouped.stores);
+    publishPositions(grouped.stores, [position({ venue: "tradezero" })]);
+    grouped.surface().paint();
+    expect((paintedLadders.states.at(-1) as { averageEntryPrice: number | null }).averageEntryPrice).toBeNull();
+    expect(grouped.container.querySelector("canvas")?.getAttribute("aria-label")).not.toContain("Average-Entry Row");
+
+    cleanup();
+    paintedLadders.states.length = 0;
+    const pinned = renderLadder({ symbol: "US.AAPL" }, 480, null);
+    applyEntryBook(pinned.stores);
+    publishPositions(pinned.stores, [position()]);
+    pinned.surface().paint();
+    expect((paintedLadders.states.at(-1) as { averageEntryPrice: number | null }).averageEntryPrice).toBeNull();
+    expect(pinned.container.querySelector("canvas")?.getAttribute("aria-label")).not.toContain("Average-Entry Row");
+  });
+
+  it("removes the cue after flattening or switching the Link Group venue", () => {
+    const { stores, surface, linkGroups, container } = renderLadder();
+    linkGroups.focusVenue("green", "alpaca-paper");
+    applyEntryBook(stores);
+    publishPositions(stores, [position({ qty: -10, avgPrice: 3.51 })]);
+    surface().paint();
+    expect((paintedLadders.states.at(-1) as { averageEntryPrice: number | null }).averageEntryPrice).toBe(3.51);
+    expect(container.querySelector("canvas")?.getAttribute("aria-label")).toContain("Average-Entry Row visible");
+
+    publishPositions(stores, [position({ qty: 0, avgPrice: 3.51 })]);
+    surface().paint();
+    expect((paintedLadders.states.at(-1) as { averageEntryPrice: number | null }).averageEntryPrice).toBeNull();
+    expect(container.querySelector("canvas")?.getAttribute("aria-label")).not.toContain("Average-Entry Row");
+
+    publishPositions(stores, [position({ venue: "tradezero", qty: 10, avgPrice: 3.49 })]);
+    linkGroups.focusVenue("green", "tradezero");
+    surface().paint();
+    expect((paintedLadders.states.at(-1) as { averageEntryPrice: number | null }).averageEntryPrice).toBe(3.49);
+
+    linkGroups.focusVenue("green", "alpaca-paper");
+    surface().paint();
+    expect((paintedLadders.states.at(-1) as { averageEntryPrice: number | null }).averageEntryPrice).toBeNull();
   });
 
   it("uses side-specific boundary rows and keeps the BBO spread state", () => {

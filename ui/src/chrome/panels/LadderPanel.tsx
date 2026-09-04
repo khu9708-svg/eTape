@@ -96,8 +96,8 @@ export function LadderPanel({ config, stores, scheduler, width, height, linkGrou
         // against the OLD symbol's stale value and misfire the reconnect branch.
         tapeGen = stores.tape.generation(symbol);
         seedLast();
-        forceRef.current++;
       }
+      forceRef.current++;
     };
     reseedForGroupRef.current = reseedForGroup;
     const offLink = linkGroups.subscribe(reseedForGroup);
@@ -163,10 +163,17 @@ export function LadderPanel({ config, stores, scheduler, width, height, linkGrou
           maxLadderOffset(book, levelsRef.current, h),
         );
         if (!applyCanvasSize(canvas, ctx, w, h, window.devicePixelRatio || 1)) return;
+        const venue = linkGroups.venueFor(groupRef.current);
+        const averageEntryPrice = venue
+          ? stores.exec.positions().find((position) =>
+            position.symbol === symbol && position.venue === venue && position.qty !== 0
+              && Number.isFinite(position.avgPrice) && position.avgPrice > 0)?.avgPrice ?? null
+          : null;
         const paintState = buildLadderState({
           symbol,
           book,
           orders: stores.exec.workingOrdersFor(symbol),
+          averageEntryPrice,
           flash,
           last,
           nowMs: performance.now(),
@@ -176,7 +183,7 @@ export function LadderPanel({ config, stores, scheduler, width, height, linkGrou
           levels: levelsRef.current,
           rowOffset: scrollOffsetRef.current,
         });
-        const accessibleText = luldAccessibleText(symbol, paintState.luld);
+        const accessibleText = luldAccessibleText(symbol, paintState.luld, paintState.averageEntryRowVisible);
         if (accessibleText !== lastAccessibleText) {
           canvas.setAttribute("aria-label", accessibleText);
           lastAccessibleText = accessibleText;
