@@ -152,6 +152,14 @@ function drawSide(
     ctx.fillText(formatSize(row.size), w - PAD, midY);
   }
 
+  if (isAverageEntry) {
+    ctx.strokeStyle = p.text;
+    ctx.lineWidth = 1;
+    const borderX = side === "bid" ? 0.5 : mid + 1.5;
+    const borderWidth = side === "bid" ? mid - 1 : w - mid - 2;
+    if (borderWidth > 0) ctx.strokeRect(borderX, y + 0.5, borderWidth, LADDER_ROW_H - 1);
+  }
+
   // display-only working-order mark: bronze inner edge on the divider side
   const hasOrder = s.orders.some((o) => o.price === row.price);
   if (hasOrder) {

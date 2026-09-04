@@ -10,17 +10,33 @@ import {
 } from "./ladderState";
 import { paintLadder } from "./paintLadder";
 
-function recordingContext(): { ctx: CanvasRenderingContext2D; draws: Array<{ text: string; font: string }> } {
+type RectStroke = { x: number; y: number; width: number; height: number; strokeStyle: string; lineWidth: number };
+
+function recordingContext(): {
+  ctx: CanvasRenderingContext2D;
+  draws: Array<{ text: string; font: string }>;
+  rectStrokes: RectStroke[];
+} {
   const draws: Array<{ text: string; font: string }> = [];
+  const rectStrokes: RectStroke[] = [];
   let font = "";
+  let strokeStyle = "";
+  let lineWidth = 1;
   const ctx = {
     clearRect() {}, fillRect() {},
     fillText(text: string) { draws.push({ text, font }); },
+    strokeRect(x: number, y: number, width: number, height: number) {
+      rectStrokes.push({ x, y, width, height, strokeStyle, lineWidth });
+    },
     beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, setLineDash() {},
     get font() { return font; },
     set font(value: string) { font = value; },
+    get strokeStyle() { return strokeStyle; },
+    set strokeStyle(value: string) { strokeStyle = value; },
+    get lineWidth() { return lineWidth; },
+    set lineWidth(value: number) { lineWidth = value; },
   } as unknown as CanvasRenderingContext2D;
-  return { ctx, draws };
+  return { ctx, draws, rectStrokes };
 }
 
 function book(overrides: Partial<Book> = {}): Book {
@@ -308,9 +324,22 @@ describe("Average-Entry Row", () => {
     expect(state.averageEntryPrice).toBe(3.49);
     expect(state.averageEntryRowVisible).toBe(true);
 
-    const { ctx, draws } = recordingContext();
+    const { ctx, draws, rectStrokes } = recordingContext();
     paintLadder(ctx, state);
     expect(draws.filter(({ font }) => font.startsWith("700 11px")).map(({ text }) => text)).toEqual(["300", "3.490"]);
+    expect(rectStrokes).toEqual([{
+      x: 0.5, y: 36.5, width: 149, height: 21, strokeStyle: palette.text, lineWidth: 1,
+    }]);
+  });
+
+  it("frames an exact ordinary ask row inside the ask half", () => {
+    const state = buildLadderState({ ...base, averageEntryPrice: 3.51 });
+    const { ctx, draws, rectStrokes } = recordingContext();
+    paintLadder(ctx, state);
+    expect(draws.filter(({ font }) => font.startsWith("700 11px")).map(({ text }) => text)).toEqual(["3.510", "400"]);
+    expect(rectStrokes).toEqual([{
+      x: 151.5, y: 36.5, width: 148, height: 21, strokeStyle: palette.text, lineWidth: 1,
+    }]);
   });
 
   it("bolds both real sides when a transient crossed book has the same exact price", () => {
@@ -324,10 +353,19 @@ describe("Average-Entry Row", () => {
     });
     expect(state.averageEntryRowVisible).toBe(true);
 
-    const { ctx, draws } = recordingContext();
+    const { ctx, draws, rectStrokes } = recordingContext();
     paintLadder(ctx, state);
     expect(draws.filter(({ font }) => font.startsWith("700 11px")).map(({ text }) => text))
       .toEqual(["300", "3.490", "3.490", "400"]);
+    expect(rectStrokes).toHaveLength(2);
+    expect(rectStrokes[0].x + rectStrokes[0].width + 0.5).toBeLessThanOrEqual(150);
+    expect(rectStrokes[1].x - 0.5).toBeGreaterThanOrEqual(151);
+    for (const border of rectStrokes) {
+      expect(border.y).toBe(36.5);
+      expect(border.height).toBe(21);
+      expect(border.strokeStyle).toBe(palette.text);
+      expect(border.lineWidth).toBe(1);
+    }
   });
 
   it("ignores invalid bases and virtual LULD boundary rows", () => {
@@ -335,6 +373,9 @@ describe("Average-Entry Row", () => {
       const state = buildLadderState(averageEntryPrice === undefined ? base : { ...base, averageEntryPrice });
       expect(state.averageEntryPrice).toBeNull();
       expect(state.averageEntryRowVisible).toBe(false);
+      const { ctx, rectStrokes } = recordingContext();
+      paintLadder(ctx, state);
+      expect(rectStrokes).toHaveLength(0);
     }
 
     const state = buildLadderState({
@@ -347,9 +388,10 @@ describe("Average-Entry Row", () => {
     });
     expect(state.averageEntryPrice).toBe(3.48);
     expect(state.averageEntryRowVisible).toBe(false);
-    const { ctx, draws } = recordingContext();
+    const { ctx, draws, rectStrokes } = recordingContext();
     paintLadder(ctx, state);
     expect(draws.some(({ text, font }) => text === "3.480" && font.startsWith("700 "))).toBe(false);
+    expect(rectStrokes).toHaveLength(0);
   });
 
   it("reports the cue only while the exact real row is visible", () => {
@@ -361,10 +403,16 @@ describe("Average-Entry Row", () => {
     expect(offscreen.averageEntryRowVisible).toBe(false);
     expect(luldAccessibleText(offscreen.symbol, offscreen.luld, offscreen.averageEntryRowVisible))
       .not.toContain("Average-Entry Row");
+    const offscreenRecording = recordingContext();
+    paintLadder(offscreenRecording.ctx, offscreen);
+    expect(offscreenRecording.rectStrokes).toHaveLength(0);
 
     const visible = buildLadderState({ ...base, book: deep, levels: 5, height: 80, rowOffset: 3, averageEntryPrice: 96 });
     expect(visible.averageEntryRowVisible).toBe(true);
     expect(luldAccessibleText(visible.symbol, visible.luld, visible.averageEntryRowVisible))
       .toContain("Average-Entry Row visible");
+    const visibleRecording = recordingContext();
+    paintLadder(visibleRecording.ctx, visible);
+    expect(visibleRecording.rectStrokes).toHaveLength(1);
   });
 });

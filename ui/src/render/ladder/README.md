@@ -13,9 +13,10 @@ the ladder symbol with a finite positive Average Entry Price can project an
 Average-Entry Row cue. The cue uses exact numeric equality against ordinary
 real bid or ask rows, so both sides may be bold during a crossed or stale book;
 pinned ladders, NET/null-venue rows, invalid or flat positions, and prices not
-present in the real book produce no cue. Only the existing 11px mono price and
-size text is bold; depth bars, colors, flashes, working-order marks, ordering,
-and scroll position are unchanged. LULD Boundary Rows never qualify.
+present in the real book produce no cue. The existing 11px mono price and size
+text is bold, and each matching real bid/ask half-row has a neutral one-pixel
+inset border; depth bars, colors, flashes, working-order marks, ordering, and
+scroll position are unchanged. LULD Boundary Rows never qualify.
 
 Configured Depth counts real price levels only. An in-range boundary is inserted
 at its sorted price and scrolls with that side. A boundary beyond Configured
