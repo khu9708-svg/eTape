@@ -50,6 +50,13 @@ describe("TVLegend", () => {
     expect(screen.queryByTestId("legend-reported")).toBeNull();
   });
 
+  it("uses primary text for Float label and value", () => {
+    const hRef: { current: TVLegendHandle | null } = { current: null };
+    render(<Harness onToggle={() => {}} hRef={hRef} floatShares={12_300_000} />);
+    expect(screen.getByText("Float").style.color).toBe(cssColor(chrome.text));
+    expect(screen.getByTestId("legend-float").style.color).toBe(cssColor(chrome.text));
+  });
+
   it("renders Free Float above Volume with compact Scanner formatting", () => {
     const hRef: { current: TVLegendHandle | null } = { current: null };
     render(<Harness onToggle={() => {}} hRef={hRef} floatShares={12_300_000} />);
@@ -59,14 +66,14 @@ describe("TVLegend", () => {
     expect(float.compareDocumentPosition(volume) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("renders the canonical Volume row with the plotted bar color", () => {
+  it("renders the canonical Volume value with the OHLC direction color", () => {
     const hRef: { current: TVLegendHandle | null } = { current: null };
     render(<Harness onToggle={() => {}} hRef={hRef} />);
     hRef.current!.update({ o: 10, h: 12, l: 9.5, c: 11.5, changePct: 1.2, up: true, volume: 1_240_000,
-      volumeColor: "#F23645", barState: null, indicators: [] });
+      barState: null, indicators: [] });
     expect(screen.getByTestId("legend-row-v1").textContent).toContain("Vol");
     expect(screen.getByTestId("legend-vol").textContent).toBe("1.24M");
-    expect(screen.getByTestId("legend-vol").style.color).toBe(cssColor("#F23645"));
+    expect(screen.getByTestId("legend-vol").style.color).toBe(cssColor(chrome.up));
   });
 
   it("mutes a hidden Volume row and suppresses its value", () => {

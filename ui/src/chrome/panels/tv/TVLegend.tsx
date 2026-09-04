@@ -45,7 +45,7 @@ export function TVLegend({ chrome, symbol, timeframe, instances, floatShares, pa
         write("o", fmtPrice(v.o), tint); write("h", fmtPrice(v.h), tint);
         write("l", fmtPrice(v.l), tint); write("c", fmtPrice(v.c), tint);
         write("chg", v.changePct === null ? "" : `${v.changePct >= 0 ? "+" : ""}${v.changePct.toFixed(2)}%`, tint);
-        write("vol", v.volumeHidden ? "" : fmtVol(v.volume), v.volumeColor ?? chrome.text);
+        write("vol", v.volumeHidden ? "" : fmtVol(v.volume), tint);
         for (const row of v.indicators) {
           row.values.forEach((val, idx) => write(
             `ind-${row.instanceId}-${idx}`,
@@ -110,7 +110,7 @@ export function TVLegend({ chrome, symbol, timeframe, instances, floatShares, pa
           <span style={{ color: chrome.text }}>C</span>{val("c")}
           {val("chg")}
         </div>
-        <div style={{ display: "flex", gap: 6 }}><span style={{ color: chrome.muted }}>Float</span><span data-testid="legend-float" style={{ color: chrome.muted }}>{formatCompactShares(floatShares)}</span></div>
+        <div style={{ display: "flex", gap: 6 }}><span style={{ color: chrome.text }}>Float</span><span data-testid="legend-float" style={{ color: chrome.text }}>{formatCompactShares(floatShares)}</span></div>
         {volumeInstance && indicatorRow(volumeInstance, "Vol")}
         {overlayInstances.map((inst) => indicatorRow(inst))}
       </div>
