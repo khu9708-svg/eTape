@@ -7,7 +7,10 @@ import { clampRightScroll, RIGHT_OFFSET_BARS, usesBoundaryManagedFollow, type Ch
 import type { ChartApiFacade, LwcSeries } from "../../render/chart/ChartApiFacade";
 import { DiamondFillPrimitive } from "../../render/chart/diamondPrimitive";
 import { SessionShadingPrimitive } from "../../render/chart/sessionPrimitive";
-import { INDICATOR_CATALOG, withDefaultParams, describeIndicator, type IndicatorInstance, type IndicatorType } from "../../render/chart/indicatorSeries";
+import {
+  CHART_INDICATOR_MODEL_VERSION, INDICATOR_CATALOG, normalizeChartIndicators, volumeInstanceId,
+  volumeIsVisible, withDefaultParams, describeIndicator, type IndicatorInstance, type IndicatorType,
+} from "../../render/chart/indicatorSeries";
 import { DrawingsPrimitive } from "../../render/chart/drawings/primitive";
 import { DrawingInteraction, type Tool } from "../../render/chart/drawings/interaction";
 import { timeframeToMs } from "../../render/chart/drawings/geometry";
@@ -27,7 +30,9 @@ import { TVContextMenu, type MenuEntry } from "./tv/TVContextMenu";
 import { TVLegend, type TVLegendHandle } from "./tv/TVLegend";
 import { TVFloatingToolbar } from "./tv/TVFloatingToolbar";
 import { IndicatorSettingsDialog } from "./tv/IndicatorSettingsDialog";
-import { ChartSettingsDialog, DEFAULT_CHART_SETTINGS, type ChartSettings } from "./tv/ChartSettingsDialog";
+import {
+  ChartSettingsDialog, chartSettingsRollbackProjection, normalizeChartSettings, type ChartSettings,
+} from "./tv/ChartSettingsDialog";
 import { computeLegendView } from "./tv/legendView";
 import { BarCloseTimer } from "./tv/BarCloseTimer";
 import { perf } from "../../perf/PerfMonitor";
@@ -151,7 +156,19 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
   const hideAll0 = (config.settings.hideAllDrawings as boolean) ?? false;
   const railPos0 = (config.settings.drawingRailPos as RailPos | undefined) ?? null;
   const drawingToolsVisible0 = (config.settings.drawingToolsVisible as boolean | undefined) ?? true;
-  const chartSettings0: ChartSettings = { ...DEFAULT_CHART_SETTINGS, ...((config.settings.chartSettings as Partial<ChartSettings>) ?? {}) };
+  const rawChartSettings = config.settings.chartSettings;
+  const [legacyVolumeVisible] = useState<unknown>(() => {
+    if (config.settings.chartIndicatorModelVersion === CHART_INDICATOR_MODEL_VERSION) return undefined;
+    if (typeof rawChartSettings === "object" && rawChartSettings !== null
+      && typeof (rawChartSettings as { volume?: unknown }).volume === "boolean") {
+      return (rawChartSettings as { volume: boolean }).volume;
+    }
+    return true;
+  });
+  const chartSettings0: ChartSettings = normalizeChartSettings(rawChartSettings);
+  const normalizedIndicators = normalizeChartIndicators(
+    config.id, config.settings.indicators, config.settings.chartIndicatorModelVersion, legacyVolumeVisible,
+  );
   // config.group is frozen (dockview captures this panel's factory once, at
   // creation, and never re-invokes it with a fresh config on a later group
   // re-pick — see PanelFrame's `group` prop comment). PanelFrame threads its own
@@ -162,14 +179,7 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
   // Config surfaces (timeframe + indicators) ARE low-rate chrome, so React state is
   // fine here (the hard rule is about market data, not per-chart config).
   const [timeframe, setTf] = useState(timeframe0);
-  // Drop any persisted instance whose type no longer exists in the catalog
-  // (e.g. a workspace saved before the DELTA indicator was retired) — an
-  // unknown type would otherwise crash describeIndicator/withDefaultParams.
-  const [instances, setInstances] = useState<IndicatorInstance[]>(
-    ((config.settings.indicators as IndicatorInstance[]) ?? []).filter(
-      (i) => INDICATOR_CATALOG[i.type as IndicatorType] !== undefined,
-    ),
-  );
+  const [instances, setInstances] = useState<IndicatorInstance[]>(normalizedIndicators.instances);
 
   const interactionRef = useRef<DrawingInteraction | null>(null);
   const tfRef = useRef<string>(timeframe0);
@@ -210,6 +220,10 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
 
   const legendRef = useRef<TVLegendHandle | null>(null);
   const instancesRef = useRef(instances);
+  const chartSettingsRef = useRef(chartSettings0);
+  const normalizationPersistedRef = useRef(false);
+  const normalizedIndicatorsRef = useRef(normalizedIndicators);
+  const rawChartSettingsRef = useRef(rawChartSettings);
   const paletteRef = useRef(palette);
   const pendingIndicatorHydrationRef = useRef<Map<string, PendingIndicatorHydration>>(new Map());
   const chartGenerationRef = useRef(0);
@@ -275,7 +289,9 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
     let chartSnapshotPending = false;
     let disposed = false;
 
-    const indicatorKeys = () => instancesRef.current.flatMap((inst) => describeIndicator(inst, paletteRef.current).map((series) => series.key));
+    const indicatorKeys = () => instancesRef.current
+      .filter((inst) => inst.type !== "VOLUME")
+      .flatMap((inst) => describeIndicator(inst, paletteRef.current).map((series) => series.key));
     const queryIndicatorHydration = async (instanceId: string) => {
       const pending = pendingIndicatorHydrationRef.current.get(instanceId);
       if (!pending || pending.readyDebt !== 0 || pending.querying || !chartSnapshotLoaded) return;
@@ -456,7 +472,6 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
     if (chartType !== "candle") controller.setChartType(chartType);
     controller.setShowSessions(chartSettings.sessionShading);
     controller.setGrid(chartSettings.grid);
-    controller.setVolumeVisible(chartSettings.volume);
     controller.setWatermark(chartSettings.watermark);
     drawings.setHideAll(hideAll);
 
@@ -633,6 +648,7 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
         // no meaningful cost.
         let indicatorsRev = 0;
         for (const inst of instancesRef.current) {
+          if (inst.type === "VOLUME") continue;
           for (const d of describeIndicator(inst, paletteRef.current)) indicatorsRev += stores.indicators.getRev(d.key);
         }
         const fillsRev = stores.fills.getRev();
@@ -802,7 +818,19 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
   // state here would clobber newer values with stale closures (this `config` is
   // frozen at panel creation — dockview never re-invokes the factory).
   const persist = (patch: Record<string, unknown>) => onConfigChange(patch);
+  const persistIndicatorModel = (next: IndicatorInstance[]) => persist({
+    indicators: next,
+    chartIndicatorModelVersion: CHART_INDICATOR_MODEL_VERSION,
+    chartSettings: chartSettingsRollbackProjection(rawChartSettingsRef.current, chartSettingsRef.current),
+  });
+  useEffect(() => {
+    const normalized = normalizedIndicatorsRef.current;
+    if (!normalized.changed || normalizationPersistedRef.current) return;
+    normalizationPersistedRef.current = true;
+    persistIndicatorModel(normalized.instances);
+  }, [config.id, onConfigChange]);
   const queueIndicatorHydration = (inst: IndicatorInstance) => {
+    if (inst.type === "VOLUME") return;
     const previous = pendingIndicatorHydrationRef.current.get(inst.instanceId);
     const readyDebt = previous?.generation === chartGenerationRef.current ? previous.readyDebt + 1 : 1;
     pendingIndicatorHydrationRef.current.set(inst.instanceId, {
@@ -830,10 +858,14 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
   const setInstancesNow = (next: IndicatorInstance[]) => {
     instancesRef.current = next;
     setInstances(next);
-    persist({ indicators: next });
+    forceRepaintRef.current = true;
+    persistIndicatorModel(next);
   };
   const addIndicator = (type: IndicatorType) => {
-    const inst: IndicatorInstance = { instanceId: `${config.id}:${type}-${idSeq.current++}`, type, params: withDefaultParams(type) };
+    if (type === "VOLUME" && instancesRef.current.some((i) => i.type === "VOLUME")) return;
+    const inst: IndicatorInstance = type === "VOLUME"
+      ? { instanceId: volumeInstanceId(config.id), type, params: withDefaultParams(type), hidden: false }
+      : { instanceId: `${config.id}:${type}-${idSeq.current++}`, type, params: withDefaultParams(type) };
     queueIndicatorHydration(inst);
     controllerRef.current?.addIndicator(inst);
     setInstancesNow([...instancesRef.current, inst]);
@@ -844,7 +876,9 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
       && JSON.stringify(withDefaultParams(previous.type, previous.params))
         !== JSON.stringify(withDefaultParams(inst.type, inst.params));
     if (paramsChanged) {
-      for (const series of describeIndicator(inst, paletteRef.current)) stores.indicators.reset(series.key);
+      if (inst.type !== "VOLUME") {
+        for (const series of describeIndicator(inst, paletteRef.current)) stores.indicators.reset(series.key);
+      }
       queueIndicatorHydration(inst);
     }
     controllerRef.current?.updateIndicator(inst);
@@ -857,7 +891,12 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
   };
   const toggleIndicatorHidden = (id: string) => {
     const inst = instancesRef.current.find((i) => i.instanceId === id);
-    if (inst) updateIndicator({ ...inst, hidden: !inst.hidden });
+    if (!inst) return;
+    if (inst.type === "VOLUME" && !volumeIsVisible(inst)) {
+      updateIndicator({ ...inst, hidden: false, styles: { ...inst.styles, hist: { ...inst.styles?.hist, hidden: false } } });
+      return;
+    }
+    updateIndicator({ ...inst, hidden: !inst.hidden });
   };
   const instancesInPane = (paneIndex: number) =>
     instancesRef.current.filter((i) => INDICATOR_CATALOG[i.type].slots[0].paneIndex === paneIndex);
@@ -910,10 +949,12 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
     persist({ drawingToolsVisible: next });
   };
   const applyChartSettings = (s: ChartSettings) => {
+    chartSettingsRef.current = s;
     setChartSettings(s);
     const c = controllerRef.current;
-    c?.setShowSessions(s.sessionShading); c?.setGrid(s.grid); c?.setVolumeVisible(s.volume); c?.setWatermark(s.watermark);
-    forceRepaintRef.current = true; persist({ chartSettings: s });
+    c?.setShowSessions(s.sessionShading); c?.setGrid(s.grid); c?.setWatermark(s.watermark);
+    forceRepaintRef.current = true;
+    persist({ chartSettings: chartSettingsRollbackProjection(rawChartSettingsRef.current, s), chartIndicatorModelVersion: CHART_INDICATOR_MODEL_VERSION });
   };
   const onScreenshot = () => {
     const canvas = facadeRef.current?.takeScreenshot();
@@ -1019,6 +1060,7 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
   // that one tick rather than flash the controls inline first.
   const headerControls = <ChartHeaderControls palette={appPalette} timeframe={timeframe}
     onTimeframe={changeTimeframe} onAddIndicator={addIndicator}
+    volumeAvailable={!instances.some((inst) => inst.type === "VOLUME")}
     onScreenshot={onScreenshot} onOpenSettings={() => setChartSettingsOpen(true)}
     drawingToolsVisible={drawingToolsVisible} onToggleDrawingTools={toggleDrawingTools} />;
 

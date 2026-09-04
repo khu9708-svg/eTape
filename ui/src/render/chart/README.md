@@ -23,6 +23,19 @@ bar marked `gap` confirms a Data Gap since the previous trustworthy real bar;
 the interval remains visually empty and any provisional No-Trade Bars in it are
 removed. A delayed real bar replaces a No-Trade Bar at the same timestamp.
 
+## Volume Indicator
+
+Each Chart Panel normalizes one canonical `VOLUME` instance with a stable
+per-panel ID. The controller owns its local histogram and reads the same
+`DisplayBar[]` as the candles, so it uses no engine indicator subscription,
+`IndicatorStore` key, or chart-window hydration. Real and Volume-Only bars keep
+their directional colors; synthetic No-Trade Bars and Data Gaps remain empty.
+
+Visible Volume reserves the existing lower 25% of the price pane. Hiding its
+instance or histogram output, or removing it, restores the ordinary candle
+scale; showing or re-adding it reapplies both scales and the current display
+bars immediately.
+
 ## Viewport behavior
 
 For `10s`, an appended bar follows when the previous newest displayed slot is

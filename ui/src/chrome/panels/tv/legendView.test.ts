@@ -9,6 +9,7 @@ const bar = (bucketStart: string, o: number, c: number): Bar =>
   ({ symbol: "US.AAPL", timeframe: "1m", bucketStart, o, h: Math.max(o, c), l: Math.min(o, c), c, v: 1000, inProgress: false });
 const bars = [bar("2026-07-08T13:30:00Z", 10, 11), bar("2026-07-08T13:31:00Z", 11, 10.5)];
 const emptyReader: IndicatorReader = { series: () => [] };
+const volume = { instanceId: "v1", type: "VOLUME" as const, params: {} };
 
 describe("computeLegendView", () => {
   it("uses the last bar when logical is null", () => {
@@ -51,6 +52,19 @@ describe("computeLegendView", () => {
     expect(v.indicators[0].paneIndex).toBe(0);
   });
 
+  it("derives Volume from the represented bar and never reads IndicatorStore for it", () => {
+    const reader: IndicatorReader = { series: () => { throw new Error("local Volume must not read the indicator store"); } };
+    const v = computeLegendView(bars, reader, [volume], LIGHT, 1);
+    expect(v.volume).toBe(1000);
+    expect(v.volumeColor).toBe(LIGHT.volDown);
+    expect(v.indicators).toEqual([]);
+  });
+
+  it("uses a monochrome Volume color and hides its value when the sole output is hidden", () => {
+    const v = computeLegendView(bars, emptyReader, [{ ...volume, styles: { hist: { color: "#F23645", hidden: true } } }], LIGHT, 0);
+    expect(v).toMatchObject({ volume: null, volumeHidden: true, volumeColor: "#F23645" });
+  });
+
   it("returns nulls for a cold (empty) series", () => {
     const v = computeLegendView([], emptyReader, [{ instanceId: "e1", type: "EMA", params: { period: 9 } }], LIGHT, null);
     expect(v.c).toBeNull();
@@ -78,6 +92,13 @@ describe("computeLegendView", () => {
   it("MACD: signal is null when a value is missing (cold series)", () => {
     const v = computeLegendView(bars, emptyReader, [{ instanceId: "m1", type: "MACD", params: { fast: 12, slow: 26, signal: 9 } }], LIGHT, null);
     expect(v.indicators[0].signal).toBeNull();
+  });
+
+  it("marks a MACD row hidden when every output is hidden", () => {
+    const reader: IndicatorReader = { series: () => [{ timeMs: Date.parse("2026-07-08T13:31:00Z"), value: 1 }] };
+    const v = computeLegendView(bars, reader, [{ instanceId: "m1", type: "MACD", params: { fast: 12, slow: 26, signal: 9 },
+      styles: { macd: { hidden: true }, signal: { hidden: true }, hist: { hidden: true } } }], LIGHT, null);
+    expect(v.indicators[0]).toMatchObject({ hidden: true, slotHidden: [true, true, true], signal: "open" });
   });
 
   it("non-MACD rows never get a signal", () => {

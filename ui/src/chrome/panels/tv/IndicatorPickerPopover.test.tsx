@@ -23,6 +23,12 @@ describe("IndicatorPickerPopover", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("hides Volume when it is already present", () => {
+    render(<IndicatorPickerPopover palette={LIGHT} anchor={null} onClose={() => {}} onAdd={() => {}} volumeAvailable={false} />);
+    expect(screen.queryByRole("button", { name: "add Volume" })).toBeNull();
+    expect(screen.getByRole("button", { name: "add MACD" })).toBeTruthy();
+  });
+
   it("closes on Escape", () => {
     const onClose = vi.fn();
     render(<IndicatorPickerPopover palette={LIGHT} anchor={null} onClose={onClose} onAdd={() => {}} />);

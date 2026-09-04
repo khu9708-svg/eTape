@@ -45,12 +45,16 @@ export function TVLegend({ chrome, symbol, timeframe, instances, floatShares, pa
         write("o", fmtPrice(v.o), tint); write("h", fmtPrice(v.h), tint);
         write("l", fmtPrice(v.l), tint); write("c", fmtPrice(v.c), tint);
         write("chg", v.changePct === null ? "" : `${v.changePct >= 0 ? "+" : ""}${v.changePct.toFixed(2)}%`, tint);
-        write("vol", fmtVol(v.volume), chrome.muted);
+        write("vol", v.volumeHidden ? "" : fmtVol(v.volume), v.volumeColor ?? chrome.text);
         for (const row of v.indicators) {
-          row.values.forEach((val, idx) => write(`ind-${row.instanceId}-${idx}`, fmtPrice(val), row.colors[idx]));
+          row.values.forEach((val, idx) => write(
+            `ind-${row.instanceId}-${idx}`,
+            row.hidden || row.slotHidden?.[idx] ? "" : fmtPrice(val),
+            row.colors[idx],
+          ));
           // Always write (even blank) so a stale POSITIVE/NEGATIVE doesn't linger once the
           // signal goes back to null (e.g. scrubbed to a bar with a missing value).
-          write(`sig-${row.instanceId}`, row.signal === "open" ? "POSITIVE" : row.signal === "close" ? "NEGATIVE" : "",
+          write(`sig-${row.instanceId}`, row.hidden ? "" : row.signal === "open" ? "POSITIVE" : row.signal === "close" ? "NEGATIVE" : "",
             row.signal === "open" ? chrome.up : row.signal === "close" ? chrome.down : undefined);
         }
       },
@@ -58,28 +62,32 @@ export function TVLegend({ chrome, symbol, timeframe, instances, floatShares, pa
     return () => { legendRef.current = null; };
   }, [legendRef, chrome]);
 
-  const overlayInstances = instances.filter((i) => INDICATOR_CATALOG[i.type].slots[0].paneIndex === 0);
+  const volumeInstance = instances.find((i) => i.type === "VOLUME");
+  const overlayInstances = instances.filter((i) => i.type !== "VOLUME" && INDICATOR_CATALOG[i.type].slots[0].paneIndex === 0);
   const paneInstances = (pane: number) => instances.filter((i) => INDICATOR_CATALOG[i.type].slots[0].paneIndex === pane);
   const panes = Array.from(new Set(instances.map((i) => INDICATOR_CATALOG[i.type].slots[0].paneIndex))).filter((p) => p > 0);
 
   const val = (key: string, extraColor?: string): JSX.Element => <span data-testid={`legend-${key}`} ref={setCell(key)} style={{ color: extraColor ?? chrome.text }} />;
 
-  const indicatorRow = (inst: IndicatorInstance): JSX.Element => {
+  const indicatorRow = (inst: IndicatorInstance, compactLabel?: string): JSX.Element => {
     const descs = INDICATOR_CATALOG[inst.type].slots;
+    const hidden = (inst.hidden ?? false) || descs.every((slot) => inst.styles?.[slot.slot]?.hidden ?? false);
+    const volume = inst.type === "VOLUME";
     return (
       <div key={inst.instanceId} data-testid={`legend-row-${inst.instanceId}`}
         onMouseEnter={() => setHovered(inst.instanceId)} onMouseLeave={() => setHovered((h) => (h === inst.instanceId ? null : h))}
         style={{ display: "flex", alignItems: "center", alignSelf: "flex-start", gap: 6, pointerEvents: "auto" }}>
-        <span style={{ color: chrome.muted }}>{legendLabel(inst)}</span>
-        {descs.map((s, idx) => <span key={s.slot} data-testid={`legend-ind-${inst.instanceId}-${idx}`} ref={setCell(`ind-${inst.instanceId}-${idx}`)} />)}
+        <span style={{ color: hidden ? chrome.muted : chrome.text }}>{compactLabel ?? legendLabel(inst)}</span>
+        {descs.map((s, idx) => <span key={s.slot} data-testid={volume ? "legend-vol" : `legend-ind-${inst.instanceId}-${idx}`}
+          ref={setCell(volume ? "vol" : `ind-${inst.instanceId}-${idx}`)} />)}
         {inst.type === "MACD" && (
           <span data-testid={`legend-sig-${inst.instanceId}`} ref={setCell(`sig-${inst.instanceId}`)} style={{ fontWeight: 600 }} />
         )}
         {hovered === inst.instanceId && (
           <span style={{ display: "inline-flex", gap: 2 }}>
-            <HoverButton aria-label={`hide ${inst.instanceId}`} title={inst.hidden ? "Show" : "Hide"} onClick={() => onToggleHidden(inst.instanceId)}
+            <HoverButton aria-label={`hide ${inst.instanceId}`} title={hidden ? "Show" : "Hide"} onClick={() => onToggleHidden(inst.instanceId)}
               style={ctrlBtn(chrome)} hoverStyle={{ background: chrome.hover, color: chrome.text }}>
-              {inst.hidden ? <IconEyeOff size={13} /> : <IconEye size={13} />}
+              {hidden ? <IconEyeOff size={13} /> : <IconEye size={13} />}
             </HoverButton>
             <HoverButton aria-label={`settings ${inst.instanceId}`} title="Settings" onClick={() => onEditIndicator(inst.instanceId)}
               style={ctrlBtn(chrome)} hoverStyle={{ background: chrome.hover, color: chrome.text }}><IconGear size={13} /></HoverButton>
@@ -96,22 +104,22 @@ export function TVLegend({ chrome, symbol, timeframe, instances, floatShares, pa
       <div style={legendBox(paneOffsets[0] ?? 0)}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600 }}>
           <span>{bare} · {timeframe} · eTape</span>
-          <span style={{ color: chrome.muted }}>O</span>{val("o")}
-          <span style={{ color: chrome.muted }}>H</span>{val("h")}
-          <span style={{ color: chrome.muted }}>L</span>{val("l")}
-          <span style={{ color: chrome.muted }}>C</span>{val("c")}
+          <span style={{ color: chrome.text }}>O</span>{val("o")}
+          <span style={{ color: chrome.text }}>H</span>{val("h")}
+          <span style={{ color: chrome.text }}>L</span>{val("l")}
+          <span style={{ color: chrome.text }}>C</span>{val("c")}
           {val("chg")}
         </div>
         <div style={{ display: "flex", gap: 6 }}><span style={{ color: chrome.muted }}>Float</span><span data-testid="legend-float" style={{ color: chrome.muted }}>{formatCompactShares(floatShares)}</span></div>
-        <div style={{ display: "flex", gap: 6 }}><span style={{ color: chrome.muted }}>Vol</span>{val("vol", chrome.muted)}</div>
-        {overlayInstances.map(indicatorRow)}
+        {volumeInstance && indicatorRow(volumeInstance, "Vol")}
+        {overlayInstances.map((inst) => indicatorRow(inst))}
       </div>
       {panes.map((pane) => {
         const collapsed = paneInstances(pane).some((i) => i.collapsed);
         return (
           <div key={pane}>
             <div style={legendBox(paneOffsets[pane] ?? 0)}>
-              {paneInstances(pane).map(indicatorRow)}
+              {paneInstances(pane).map((inst) => indicatorRow(inst))}
             </div>
             <div style={paneControlBox(paneOffsets[pane] ?? 0)}>
               <HoverButton aria-label={collapsed ? `expand pane ${pane}` : `collapse pane ${pane}`} title={collapsed ? "Expand pane" : "Collapse pane"}

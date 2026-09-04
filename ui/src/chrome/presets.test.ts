@@ -12,6 +12,23 @@ describe("presets", () => {
     expect(workspace.panels.filter((p) => p.panelId === "chart")).toHaveLength(4);
     expect(workspace.panels.every((p) => p.group === null)).toBe(true);
     expect(workspace.panels.every((p) => !("symbol" in p.settings))).toBe(true);
+    for (const panel of workspace.panels.filter((p) => p.panelId === "chart")) {
+      expect(panel.settings).toMatchObject({
+        chartIndicatorModelVersion: 1,
+        chartSettings: expect.objectContaining({ volume: false }),
+        indicators: [expect.objectContaining({ instanceId: `${panel.id}:VOLUME`, type: "VOLUME" })],
+      });
+    }
+  });
+
+  it("starts every built-in chart panel with one current-model Volume Indicator", () => {
+    for (const preset of PRESETS) for (const panel of preset.build().panels.filter((p) => p.panelId === "chart")) {
+      expect(panel.settings).toMatchObject({
+        chartIndicatorModelVersion: 1,
+        chartSettings: expect.objectContaining({ volume: false }),
+        indicators: expect.arrayContaining([expect.objectContaining({ instanceId: `${panel.id}:VOLUME`, type: "VOLUME" })]),
+      });
+    }
   });
   for (const preset of PRESETS) {
     it(`${preset.id}: every panel id is a real, non-dev registered panel`, () => {

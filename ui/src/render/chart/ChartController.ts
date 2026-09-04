@@ -2,13 +2,16 @@ import type { ChartApiFacade, LwcSeries } from "./ChartApiFacade";
 import type { Palette } from "../palette";
 import type { Bar } from "../../wire/contract";
 import {
-  chartOptions, candleOptions, volumeOptions, mainSeriesOptions, VOLUME_SCALE_MARGINS,
+  chartOptions, candleOptions, volumeOptions, mainSeriesOptions, CANDLE_SCALE_MARGINS,
+  CANDLE_SCALE_MARGINS_WITHOUT_VOLUME, NO_VOLUME_SCALE_MARGINS, VOLUME_SCALE_MARGINS,
   boundedOverlayAutoscale, OVERLAY_AUTOSCALE_FACTOR, RIGHT_OFFSET_BARS, usesBoundaryManagedFollow,
   type ChartType, type PriceRange,
 } from "./chartTheme";
 import { sessionAt, buildDaySegment, classify } from "./sessions";
 import type { Band, DaySegment } from "./sessions";
-import { describeIndicator, withDefaultParams, type IndicatorInstance } from "./indicatorSeries";
+import {
+  describeIndicator, volumeColorFor, volumeIsVisible, withDefaultParams, type IndicatorInstance,
+} from "./indicatorSeries";
 import { LWC_LINE_STYLE } from "./lineStyle";
 import type { FillMarker } from "./diamondMarker";
 import { bucketStartMs } from "./barBucket";
@@ -54,7 +57,7 @@ export const COLLAPSED_STRETCH = 0.06;
 
 export class ChartController {
   private candle!: LwcSeries;
-  private volume!: LwcSeries;
+  private volume: LwcSeries | null = null;
   private lastAppliedCount = 0;             // bars applied via setData/update
   private lastAppliedKey = "";              // last bar's bucketStart|close, to detect in-progress change
   // bucketStart of the bar at index (lastAppliedCount-1) as of the last apply — an
@@ -126,7 +129,6 @@ export class ChartController {
   private chartType: ChartType = "candle";
   private showSessions = true;
   private gridVisible = true;
-  private volumeVisible = true;
   private watermarkOn = false;
   private pendingBoundaryFollowMs: number | null = null;
   private viewportInteractionActive = false;
@@ -150,10 +152,7 @@ export class ChartController {
   mount(): void {
     this.facade.applyOptions(chartOptions(this.palette, this.config.timeframe));
     this.candle = this.facade.setMainSeries("candle", candleOptions(this.palette));
-    this.volume = this.facade.addSeries("histogram", volumeOptions(this.palette), 0);
-    // Confine the volume overlay to the bottom band of the main pane so it never
-    // overlaps the candles (the candle scale reserves the same band — see chartTheme).
-    this.facade.setPriceScaleMargins("", VOLUME_SCALE_MARGINS);
+    this.setVolumeGeometry(false);
   }
 
   sync(nowMs = Date.now()): void {
@@ -257,7 +256,7 @@ export class ChartController {
       const beforeLogical = managedFollow ? this.facade.getVisibleLogicalRange() : null;
       for (let i = from; i < bars.length; i++) {
         this.candle.update(this.mainPoint(bars[i]));
-        this.volume.update(toVolume(bars[i], this.palette));
+        this.volume?.update(this.toVolume(bars[i]));
       }
       if (this.viewportInteractionActive) {
         this.pendingBoundaryFollowMs = null;
@@ -289,7 +288,7 @@ export class ChartController {
       this.appendedFrom = from;
     } else if (lastChanged) {
       this.candle.update(this.mainPoint(last));
-      this.volume.update(toVolume(last, this.palette));
+      this.volume?.update(this.toVolume(last));
       this.lastAppliedKey = keyOf(last);
       this.lastTailBucket = last.bucketStart;
       this.rememberRaw(rawBars);
@@ -317,7 +316,7 @@ export class ChartController {
       && beforeLogical.to >= oldLastLogical;
     const startedAt = performance.now();
     this.candle.setData(bars.map((b) => this.mainPoint(b)));
-    this.volume.setData(bars.map((b) => toVolume(b, this.palette)));
+    this.volume?.setData(bars.map((b) => this.toVolume(b)));
     uiLog.debug("chart setData complete", {
       symbol: this.config.symbol,
       timeframe: this.config.timeframe,
@@ -676,6 +675,7 @@ export class ChartController {
 
   private applyIndicators(): void {
     for (const { inst, series } of this.indicators.values()) {
+      if (inst.type === "VOLUME") continue;
       const descriptors = describeIndicator(inst, this.palette);
       for (const d of descriptors) {
         const s = series.get(d.key);
@@ -749,10 +749,43 @@ export class ChartController {
     this.facade.setSessionBands(this.bandsCache);
   }
 
+  private volumeIndicator(): IndicatorInstance | null {
+    for (const { inst } of this.indicators.values()) if (inst.type === "VOLUME") return inst;
+    return null;
+  }
+
+  private setVolumeGeometry(visible: boolean): void {
+    this.facade.applyOptions({ rightPriceScale: { scaleMargins: visible ? CANDLE_SCALE_MARGINS : CANDLE_SCALE_MARGINS_WITHOUT_VOLUME } });
+    this.facade.setPriceScaleMargins("", visible ? VOLUME_SCALE_MARGINS : NO_VOLUME_SCALE_MARGINS);
+  }
+
+  private toVolume(b: DisplayBar): object {
+    return toVolume(b, this.palette, this.volumeIndicator());
+  }
+
   addIndicator(inst: IndicatorInstance): void {
     // Resolve any unset params to catalog defaults so the engine always gets a
     // complete param set (and the stored instance matches what's rendered).
     const resolved: IndicatorInstance = { ...inst, params: withDefaultParams(inst.type, inst.params) };
+    if (resolved.type === "VOLUME") {
+      if (this.volumeIndicator()) return;
+      const series = new Map<string, LwcSeries>();
+      for (const d of describeIndicator(resolved, this.palette)) {
+        series.set(d.key, this.facade.addSeries("histogram", {
+          color: d.color,
+          priceScaleId: "",
+          priceLineVisible: false,
+          lastValueVisible: false,
+          visible: volumeIsVisible(resolved),
+        }, 0));
+      }
+      this.indicators.set(resolved.instanceId, { inst: resolved, series });
+      this.volume = series.get(resolved.instanceId) ?? null;
+      this.volume?.setData(this.displayedBars.map((b) => this.toVolume(b)));
+      this.setVolumeGeometry(volumeIsVisible(resolved));
+      this.liftCandleToTop();
+      return;
+    }
     const series = new Map<string, LwcSeries>();
     for (const d of describeIndicator(resolved, this.palette)) {
       series.set(d.key, this.facade.addSeries(d.kind === "histogram" ? "histogram" : "line",
@@ -811,7 +844,12 @@ export class ChartController {
       this.indicatorLastAppliedTimeMs.delete(k);
     }
     this.indicators.delete(instanceId);
-    void this.deps.commands.sendCommand("UnsubscribeIndicator", { instanceId });
+    if (entry.inst.type === "VOLUME") {
+      this.volume = null;
+      this.setVolumeGeometry(false);
+    } else {
+      void this.deps.commands.sendCommand("UnsubscribeIndicator", { instanceId });
+    }
     this.liftCandleToTop();
   }
 
@@ -825,6 +863,17 @@ export class ChartController {
     if (JSON.stringify(existing.inst.params) !== JSON.stringify(next.params)) {
       this.removeIndicator(inst.instanceId);
       this.addIndicator(next);
+      return;
+    }
+    if (next.type === "VOLUME") {
+      existing.inst = next;
+      const visible = volumeIsVisible(next);
+      for (const d of describeIndicator(next, this.palette)) {
+        existing.series.get(d.key)?.applyOptions({ visible });
+      }
+      this.volume = existing.series.get(next.instanceId) ?? null;
+      this.volume?.setData(this.displayedBars.map((b) => this.toVolume(b)));
+      this.setVolumeGeometry(visible);
       return;
     }
     existing.inst = next; // params unchanged → style/visibility only, applied in place (no re-subscribe)
@@ -843,6 +892,8 @@ export class ChartController {
   setTimeframe(timeframe: string): void {
     this.config = { ...this.config, timeframe };
     this.facade.applyOptions(chartOptions(this.palette, timeframe));
+    const volume = this.volumeIndicator();
+    this.setVolumeGeometry(volume ? volumeIsVisible(volume) : false);
     this.resetForReload();
   }
 
@@ -874,7 +925,7 @@ export class ChartController {
     // 1m symbol) leaves the old timeframe's candles frozen on screen forever
     // (applyBars early-returns on an empty series, so it would never clear them).
     this.candle.setData([]);
-    this.volume.setData([]);
+    this.volume?.setData([]);
     this.facade.setSessionBands([]);
     // Wipe the previous symbol's overlay/study data too. Otherwise each indicator's
     // LWC series AND its shared-store entry (keyed by instanceId, not symbol) keep the
@@ -884,14 +935,15 @@ export class ChartController {
     // both also keeps indicatorApplied at 0 (already cleared above) so the incoming
     // snapshot takes the clean setData() branch instead of applyIndicators' continues()
     // last-point-only update.
-    for (const { series } of this.indicators.values()) {
+    for (const { inst, series } of this.indicators.values()) {
       for (const [key, s] of series) {
+        if (inst.type === "VOLUME") continue;
         this.deps.indicators.reset(key);
         s.setData([]);
       }
     }
     // Re-subscribe every live indicator for the new (symbol, timeframe).
-    for (const { inst } of this.indicators.values()) this.subscribeIndicator(inst);
+    for (const { inst } of this.indicators.values()) if (inst.type !== "VOLUME") this.subscribeIndicator(inst);
     if (this.watermarkOn) this.facade.setWatermark(bareSymbol(this.config.symbol));
   }
 
@@ -900,9 +952,18 @@ export class ChartController {
     this.facade.applyOptions(chartOptions(p, this.config.timeframe));
     this.candle.applyOptions(mainSeriesOptions(this.chartType, p));
     this.candle.applyOptions({ lastValueVisible: this.lastValueVisible });
-    this.volume.applyOptions({ ...volumeOptions(p), visible: this.volumeVisible });
-    for (const { inst, series } of this.indicators.values())
-      for (const d of describeIndicator(inst, p)) series.get(d.key)?.applyOptions({ color: d.color });
+    if (this.volume) {
+      const volume = this.volumeIndicator();
+      this.volume.applyOptions({ ...volumeOptions(p), visible: volume ? volumeIsVisible(volume) : false });
+      this.volume.setData(this.displayedBars.map((b) => this.toVolume(b)));
+    }
+    for (const { inst, series } of this.indicators.values()) {
+      for (const d of describeIndicator(inst, p)) {
+        if (inst.type === "VOLUME") continue;
+        series.get(d.key)?.applyOptions({ color: d.color });
+      }
+    }
+    this.setVolumeGeometry(this.volumeIndicator() ? volumeIsVisible(this.volumeIndicator()!) : false);
     this.applyGrid();
   }
 
@@ -950,12 +1011,13 @@ export class ChartController {
     this.lastBarsOp = "reset";
     this.appendedFrom = 0;
     this.liftCandleToTop();
+    const volume = this.volumeIndicator();
+    this.setVolumeGeometry(volume ? volumeIsVisible(volume) : false);
   }
 
   setFills(markers: FillMarker[]): void { this.facade.setFillMarkers(markers); }
   setShowSessions(on: boolean): void { this.showSessions = on; }
   setGrid(on: boolean): void { this.gridVisible = on; this.applyGrid(); }
-  setVolumeVisible(on: boolean): void { this.volumeVisible = on; this.volume.applyOptions({ visible: on }); }
   setLastValueVisible(on: boolean): void { this.lastValueVisible = on; this.candle.applyOptions({ lastValueVisible: on }); }
   setWatermark(on: boolean): void { this.watermarkOn = on; this.facade.setWatermark(on ? bareSymbol(this.config.symbol) : null); }
 
@@ -1058,9 +1120,9 @@ function candleRangeOf(bars: readonly DisplayBar[]): PriceRange | null {
   }
   return minValue <= maxValue ? { minValue, maxValue } : null;
 }
-function toVolume(b: DisplayBar, p: Palette) {
+function toVolume(b: DisplayBar, p: Palette, inst: IndicatorInstance | null) {
   if (b.synthetic || b.dataGap) return { time: toLwcTime(b.bucketStart) };
-  return { time: toLwcTime(b.bucketStart), value: b.v, color: b.c >= b.o ? p.volUp : p.volDown };
+  return { time: toLwcTime(b.bucketStart), value: b.v, color: inst ? volumeColorFor(inst, p, b.c >= b.o) : b.c >= b.o ? p.volUp : p.volDown };
 }
 
 export function fillEmptyTenSecondSlots(bars: Bar[], nowMs: number, openDDown = false): DisplayBar[] {

@@ -61,6 +61,13 @@ describe("ChartHeaderControls", () => {
     expect(screen.queryByRole("button", { name: "add EMA" })).toBeNull();
   });
 
+  it("omits Volume while the canonical instance exists", () => {
+    render(<ChartHeaderControls {...base} volumeAvailable={false} />);
+    fireEvent.click(screen.getByRole("button", { name: "indicators" }));
+    expect(screen.queryByRole("button", { name: "add Volume" })).toBeNull();
+    expect(screen.getByRole("button", { name: "add EMA" })).toBeTruthy();
+  });
+
   it("has no symbol button — the ledger header it portals into already shows the symbol", () => {
     render(<ChartHeaderControls {...base} />);
     expect(screen.queryByRole("button", { name: /symbol/i })).toBeNull();

@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { describeIndicator, withDefaultParams, INDICATOR_CATALOG } from "./indicatorSeries";
+import {
+  CHART_INDICATOR_MODEL_VERSION, describeIndicator, normalizeChartIndicators,
+  volumeInstanceId, withDefaultParams, INDICATOR_CATALOG,
+} from "./indicatorSeries";
 import { LIGHT } from "../palette";
 
 describe("indicator catalog", () => {
@@ -73,5 +76,75 @@ describe("describeIndicator style resolution", () => {
       LIGHT,
     );
     expect(d[0].color).toBe("#bbbbbb");
+  });
+});
+
+describe("normalizeChartIndicators", () => {
+  const volume = (patch: Record<string, unknown> = {}) => ({
+    instanceId: "old-volume", type: "VOLUME", params: {}, ...patch,
+  });
+
+  it("adds one visible canonical Volume Indicator to an untouched legacy panel", () => {
+    const out = normalizeChartIndicators("c1", [], undefined, undefined);
+    expect(out.instances).toEqual([{ instanceId: volumeInstanceId("c1"), type: "VOLUME", params: {}, hidden: false }]);
+    expect(out.changed).toBe(true);
+  });
+
+  it("keeps the legacy built-in hidden state", () => {
+    expect(normalizeChartIndicators("c1", [], undefined, false).instances[0]).toMatchObject({ type: "VOLUME", hidden: true });
+  });
+
+  it("unions a visible added Volume and preserves its custom histogram color", () => {
+    const out = normalizeChartIndicators("c1", [volume({ styles: { hist: { color: "#F23645" } } })], undefined, false);
+    expect(out.instances).toEqual([{
+      instanceId: volumeInstanceId("c1"), type: "VOLUME", params: {}, hidden: false,
+      styles: { hist: { color: "#F23645" } },
+    }]);
+  });
+
+  it("retains one hidden canonical Volume when every legacy representation is hidden", () => {
+    const out = normalizeChartIndicators("c1", [volume({ hidden: true, styles: { hist: { hidden: true } } })], undefined, false);
+    expect(out.instances).toEqual([{ instanceId: volumeInstanceId("c1"), type: "VOLUME", params: {}, hidden: true }]);
+  });
+
+  it("drops duplicate Volumes while keeping generic order and the first visible style", () => {
+    const ema = { instanceId: "e1", type: "EMA", params: { period: 9 } };
+    const out = normalizeChartIndicators("c1", [volume(), ema, volume({ styles: { hist: { color: "#2962FF", width: 4 } } })], undefined, true);
+    expect(out.instances).toEqual([{
+      instanceId: volumeInstanceId("c1"), type: "VOLUME", params: {}, hidden: false,
+      styles: { hist: { color: "#2962FF" } },
+    }, ema]);
+  });
+
+  it("filters unknown indicator types at the same boundary", () => {
+    const out = normalizeChartIndicators("c1", [
+      { instanceId: "bad", type: "UNKNOWN", params: {} },
+      { instanceId: "e1", type: "EMA", params: { period: 9 } },
+    ], undefined, true);
+    expect(out.instances.map((i) => i.type)).toEqual(["EMA", "VOLUME"]);
+  });
+
+  it("does not recreate a removed Volume in the current model", () => {
+    const out = normalizeChartIndicators("c1", [], CHART_INDICATOR_MODEL_VERSION, true);
+    expect(out.instances).toEqual([]);
+  });
+
+  it("keeps a current canonical state idempotent", () => {
+    const current = [{ instanceId: volumeInstanceId("c1"), type: "VOLUME", params: {}, hidden: false,
+      styles: { hist: { color: "#2962FF" } } },
+      { instanceId: "e1", type: "EMA", params: { period: 9 } }];
+    const once = normalizeChartIndicators("c1", current, CHART_INDICATOR_MODEL_VERSION, false);
+    const twice = normalizeChartIndicators("c1", once.instances, CHART_INDICATOR_MODEL_VERSION, false);
+    expect(once.instances).toEqual(current);
+    expect(once.changed).toBe(false);
+    expect(twice).toEqual(once);
+  });
+
+  it("preserves the stable canonical state when a versioned import has duplicates", () => {
+    const out = normalizeChartIndicators("c1", [
+      volume({ styles: { hist: { color: "#F23645" } } }),
+      { instanceId: volumeInstanceId("c1"), type: "VOLUME", params: {}, hidden: true },
+    ], CHART_INDICATOR_MODEL_VERSION, true);
+    expect(out.instances).toEqual([{ instanceId: volumeInstanceId("c1"), type: "VOLUME", params: {}, hidden: true }]);
   });
 });

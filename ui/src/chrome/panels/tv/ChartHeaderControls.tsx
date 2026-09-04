@@ -12,6 +12,7 @@ export interface ChartHeaderControlsProps {
   palette: Palette; timeframe: string;
   onTimeframe: (tf: string) => void;
   onAddIndicator: (type: IndicatorType) => void; onScreenshot: () => void; onOpenSettings: () => void;
+  volumeAvailable?: boolean;
   drawingToolsVisible: boolean; onToggleDrawingTools: () => void;
 }
 
@@ -22,7 +23,7 @@ export interface ChartHeaderControlsProps {
 // header already shows — no separate symbol button here, and styled with the app
 // Daylight-Ledger palette + sans font so it reads as chrome, not canvas.
 export function ChartHeaderControls(
-  { palette, timeframe, onTimeframe, onAddIndicator, onScreenshot, onOpenSettings, drawingToolsVisible, onToggleDrawingTools }: ChartHeaderControlsProps,
+  { palette, timeframe, onTimeframe, onAddIndicator, onScreenshot, onOpenSettings, volumeAvailable = true, drawingToolsVisible, onToggleDrawingTools }: ChartHeaderControlsProps,
 ): JSX.Element {
   const [pickerOpen, setPickerOpen] = useState(false);
   const indicatorsBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -62,7 +63,7 @@ export function ChartHeaderControls(
         </HoverButton>
         {pickerOpen && (
           <IndicatorPickerPopover palette={palette} anchor={indicatorsBtnRef.current} onClose={() => setPickerOpen(false)}
-            onAdd={(t) => { onAddIndicator(t); setPickerOpen(false); }} />
+            onAdd={(t) => { onAddIndicator(t); setPickerOpen(false); }} volumeAvailable={volumeAvailable} />
         )}
         <HoverButton type="button" aria-label="drawing tools" aria-pressed={drawingToolsVisible}
           title={drawingToolsVisible ? "Hide drawing tools" : "Show drawing tools"} onClick={onToggleDrawingTools}

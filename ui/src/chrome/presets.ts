@@ -1,6 +1,7 @@
 import type { PanelConfig } from "./workspace";
 import { MONITORING_WORKSPACE_ID, WORKSPACE_LAYOUT_VERSION, type Workspace } from "./workspace";
 import type { SerializedDockview } from "dockview";
+import { CHART_INDICATOR_MODEL_VERSION, defaultVolumeIndicator } from "../render/chart/indicatorSeries";
 
 export interface Preset {
   id: string;
@@ -75,7 +76,16 @@ const MONITORING_LAYOUT: SerializedDockview = {
 } as SerializedDockview;
 
 const unassignedChart = (id: string): PanelConfig =>
-  ({ id, panelId: "chart", group: null, settings: { timeframe: "1m" } });
+  ({ id, panelId: "chart", group: null, settings: chartSettings(id, "1m", []) });
+
+function chartSettings(id: string, timeframe: string, indicators: object[]): Record<string, unknown> {
+  return {
+    timeframe,
+    indicators: [defaultVolumeIndicator(id), ...indicators],
+    chartIndicatorModelVersion: CHART_INDICATOR_MODEL_VERSION,
+    chartSettings: { sessionShading: true, grid: true, volume: false, watermark: false, barCloseTimer: true },
+  };
+}
 
 export function buildMonitoringWorkspace(): Workspace {
   return {
@@ -175,12 +185,10 @@ export const PRESETS: Preset[] = [
         {
           id: "t-chart-1m", panelId: "chart", group: "blue",
           settings: {
-            timeframe: "10s",
-            indicators: [
+            ...chartSettings("t-chart-1m", "10s", [
               { instanceId: "t-chart-1m:VWAP-0", type: "VWAP", params: {}, hidden: false, styles: { line: { color: "#089981" } } },
-            ],
+            ]),
             chartType: "candle", hideAllDrawings: false,
-            chartSettings: { sessionShading: true, grid: true, volume: true, watermark: false },
             drawingRailPos: { x: 0, y: 445.9375 },
           },
         },
@@ -189,11 +197,13 @@ export const PRESETS: Preset[] = [
           settings: {
             timeframe: "D",
             indicators: [
+              defaultVolumeIndicator("t-chart-10s"),
               { instanceId: "t-chart-10s:SMA-0", type: "SMA", params: { period: 200 }, styles: { line: { color: "#F23645" } }, hidden: false },
             ],
             hideAllDrawings: false,
             drawingRailPos: { x: 114.125, y: 304.9375 },
-            chartSettings: { sessionShading: true, grid: true, volume: true, watermark: false },
+            chartIndicatorModelVersion: CHART_INDICATOR_MODEL_VERSION,
+            chartSettings: { sessionShading: true, grid: true, volume: false, watermark: false, barCloseTimer: true },
           },
         },
         { id: "t-dom", panelId: "ladder", group: "blue", settings: {} },
@@ -208,11 +218,13 @@ export const PRESETS: Preset[] = [
           settings: {
             timeframe: "1m",
             indicators: [
+              defaultVolumeIndicator("chart-977336c7"),
               { instanceId: "chart-977336c7:MACD-0", type: "MACD", params: { fast: 12, slow: 26, signal: 9 }, styles: { hist: { hidden: true } }, collapsed: true },
               { instanceId: "chart-977336c7:VWAP-0", type: "VWAP", params: {}, styles: { line: { color: "#089981" } } },
             ],
             chartType: "candle", hideAllDrawings: false,
-            chartSettings: { sessionShading: true, grid: true, volume: true, watermark: false },
+            chartIndicatorModelVersion: CHART_INDICATOR_MODEL_VERSION,
+            chartSettings: { sessionShading: true, grid: true, volume: false, watermark: false, barCloseTimer: true },
             drawingRailPos: { x: 298.375, y: 448 },
           },
         },

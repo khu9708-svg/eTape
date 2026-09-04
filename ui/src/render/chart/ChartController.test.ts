@@ -6,7 +6,7 @@ import {
 import type { ChartApiFacade, LwcSeries } from "./ChartApiFacade";
 import { LIGHT, DARK } from "../palette";
 import type { Bar } from "../../wire/contract";
-import { withDefaultParams } from "./indicatorSeries";
+import { defaultVolumeIndicator, withDefaultParams } from "./indicatorSeries";
 import type { Band } from "./sessions";
 
 function fakeSeries(onAppend?: () => void): LwcSeries & { calls: string[]; updates: unknown[]; setDataCalls: unknown[][]; orderCalls: number[]; optionCalls: unknown[] } {
@@ -82,7 +82,7 @@ function fakeFacade() {
     getVisibleLogicalRange: () => facade.visibleLogicalRange,
     setVisibleLogicalRange: (r) => { setVisibleLogicalRangeCalls.push(r); facade.visibleLogicalRange = r; },
     resize: () => {},
-    applyOptions: (o) => { facade.lastOptions = o; },
+    applyOptions: (o) => { facade.lastOptions = { ...(facade.lastOptions as object | null), ...(o as object) }; },
     setWatermark: (t) => { facade.watermark = t; },
     remove: () => {},
   };
@@ -110,6 +110,7 @@ function barReaderByTf(byTf: Record<string, Bar[]>): BarReader {
   return { series: (_symbol, tf) => byTf[tf] ?? [] };
 }
 const emptyIndicators: IndicatorController = { series: () => [], reset: () => {} };
+const addVolume = (ctrl: ChartController): void => { ctrl.addIndicator(defaultVolumeIndicator("c1")); };
 function indicatorReaderOf(points: { timeMs: number; value: number }[]): IndicatorController {
   return { series: () => points, reset: () => {} };
 }
@@ -134,6 +135,7 @@ const make = (reader: BarReader, cmd = commandSpy(), ind: IndicatorController = 
   const facade = fakeFacade();
   const ctrl = new ChartController(facade, LIGHT, { symbol: "US.AAPL", timeframe: "1m" }, { bars: reader, indicators: ind, commands: cmd });
   ctrl.mount();
+  addVolume(ctrl);
   return { facade, ctrl, cmd };
 };
 const make10s = (reader: BarReader, cmd = commandSpy()) => {
@@ -141,6 +143,7 @@ const make10s = (reader: BarReader, cmd = commandSpy()) => {
   const ctrl = new ChartController(facade, LIGHT, { symbol: "US.AAPL", timeframe: "10s" },
     { bars: reader, indicators: emptyIndicators, commands: cmd });
   ctrl.mount();
+  addVolume(ctrl);
   return { facade, ctrl, cmd };
 };
 const make10sWithViewport = (reader: BarReader, openDDown = () => false) => {
@@ -151,6 +154,7 @@ const make10sWithViewport = (reader: BarReader, openDDown = () => false) => {
       isOpenDDown: openDDown,
     });
   ctrl.mount();
+  addVolume(ctrl);
   return { facade, ctrl };
 };
 
@@ -187,12 +191,14 @@ describe("ChartController", () => {
     const facade = fakeFacade();
     const ctrl = new ChartController(facade, LIGHT, { symbol: "US.AAPL", timeframe: "10s" }, { bars: barReaderOf(bars), indicators: emptyIndicators, commands: commandSpy() });
     ctrl.mount();
+    addVolume(ctrl);
     ctrl.sync(Date.parse("2026-07-06T13:30:20Z"));
     expect(facade.created[0].series.setDataCalls.at(-1)).toEqual([
       { time: Date.parse("2026-07-06T13:30:00Z") / 1000, open: 10, high: 10, low: 10, close: 10 },
       { time: Date.parse("2026-07-06T13:30:10Z") / 1000, open: 10, high: 10, low: 10, close: 10 },
     ]);
-    expect(facade.created[1].series.setDataCalls.at(-1)?.slice(1)).toEqual([
+    expect(facade.created[1].series.setDataCalls.at(-1)).toEqual([
+      { time: Date.parse("2026-07-06T13:30:00Z") / 1000, value: 100, color: LIGHT.volUp },
       { time: Date.parse("2026-07-06T13:30:10Z") / 1000 },
     ]);
     expect(ctrl.displayBars().at(-1)?.synthetic).toBe(true);
@@ -403,6 +409,7 @@ describe("ChartController", () => {
     const facade = fakeFacade();
     const ctrl = new ChartController(facade, LIGHT, { symbol: "US.AAPL", timeframe: "10s" }, { bars: reader, indicators: emptyIndicators, commands: commandSpy() });
     ctrl.mount();
+    addVolume(ctrl);
     ctrl.sync(Date.parse("2026-07-06T13:30:20Z"));
     const scrollsBefore = facade.scrolls;
     reader.set([
@@ -424,6 +431,7 @@ describe("ChartController", () => {
     const facade = fakeFacade();
     const ctrl = new ChartController(facade, LIGHT, { symbol: "US.AAPL", timeframe: "10s" }, { bars: reader, indicators: emptyIndicators, commands: commandSpy() });
     ctrl.mount();
+    addVolume(ctrl);
     ctrl.sync(Date.parse("2026-07-06T13:30:20Z"));
     const beforeTime = {
       from: Date.parse("2026-07-06T13:29:00Z") / 1000,
@@ -449,6 +457,7 @@ describe("ChartController", () => {
     const facade = fakeFacade();
     const ctrl = new ChartController(facade, LIGHT, { symbol: "US.AAPL", timeframe: "10s" }, { bars: reader, indicators: emptyIndicators, commands: commandSpy() });
     ctrl.mount();
+    addVolume(ctrl);
     ctrl.sync(Date.parse("2026-07-06T13:30:20Z"));
     const beforeTime = {
       from: Date.parse("2026-07-06T13:28:00Z") / 1000,
@@ -969,6 +978,7 @@ describe("ChartController", () => {
     const facade = fakeFacade();
     const ctrl = new ChartController(facade, LIGHT, { symbol: "US.AAPL", timeframe: "10s" }, { bars: reader, indicators: emptyIndicators, commands: commandSpy() });
     ctrl.mount();
+    addVolume(ctrl);
     ctrl.sync(Date.parse("2026-07-06T13:30:20Z"));
     reader.set([
       { ...bar("2026-07-06T13:30:00Z", 10), timeframe: "10s" },
@@ -986,6 +996,7 @@ describe("ChartController", () => {
       const facade = fakeFacade();
       const ctrl = new ChartController(facade, LIGHT, { symbol: "US.AAPL", timeframe: "10s" }, { bars: barReaderOf(bars), indicators: emptyIndicators, commands: commandSpy() });
       ctrl.mount();
+      addVolume(ctrl);
       return { facade, ctrl };
     })();
     ctrl.sync(Date.parse("2026-07-06T13:30:20Z"));
@@ -995,14 +1006,21 @@ describe("ChartController", () => {
     expect(ctrl.displayBars()[1].c).toBe(12);
   });
 
-  it("mount creates a candle + volume series", () => {
-    const { facade } = make(barReaderOf([]));
-    expect(facade.created.map((c) => c.kind)).toEqual(["candle", "histogram"]);
+  it("mount creates only the main series; Volume is added by the panel", () => {
+    const facade = fakeFacade();
+    const ctrl = new ChartController(facade, LIGHT, { symbol: "US.AAPL", timeframe: "1m" },
+      { bars: barReaderOf([]), indicators: emptyIndicators, commands: commandSpy() });
+    ctrl.mount();
+    expect(facade.created.map((c) => c.kind)).toEqual(["candle"]);
   });
 
-  it("mount confines the volume overlay to a bottom band so it never floods the candles", () => {
-    const { facade } = make(barReaderOf([]));
-    // The volume overlay scale ("") must get top-heavy margins (top ≥ 0.5, bottom 0)
+  it("Volume stays in its bottom band so it never floods the candles", () => {
+    const facade = fakeFacade();
+    const ctrl = new ChartController(facade, LIGHT, { symbol: "US.AAPL", timeframe: "1m" },
+      { bars: barReaderOf([]), indicators: emptyIndicators, commands: commandSpy() });
+    ctrl.mount();
+    addVolume(ctrl);
+    // The Volume Indicator scale ("") must get top-heavy margins (top ≥ 0.5, bottom 0)
     // so volume sits in a bottom band. Without this LWC's default margins let volume
     // autoscale across most of the pane, overlapping the candlesticks.
     const vol = facade.scaleMargins.find((m) => m.id === "");
@@ -1202,6 +1220,7 @@ describe("ChartController", () => {
     const ctrl = new ChartController(facade, LIGHT, { symbol: "US.AAPL", timeframe: "D" },
       { bars: reader, indicators: emptyIndicators, commands: commandSpy() });
     ctrl.mount();
+    addVolume(ctrl);
     ctrl.sync(); // backfill Daily
     const preview = () => (facade.lastOptions as { localization?: { timeFormatter?: (time: number) => string } })
       .localization?.timeFormatter?.(Date.parse("2026-07-06T13:30:00Z") / 1000);
@@ -1255,7 +1274,7 @@ describe("ChartController", () => {
   });
 
   it("setSymbol clears the previous symbol's indicator points from the shared store, not just the LWC series", () => {
-    // Regression test: resetForReload used to clear the candle/volume series but
+    // Regression test: resetForReload used to clear the candle/Volume series but
     // leave each indicator's LWC series AND its IndicatorStore entry (keyed by
     // instanceId, not symbol) holding the OLD symbol's points. Those stale,
     // differently-priced points stayed drawn until a fresh snapshot arrived, and
@@ -1274,7 +1293,7 @@ describe("ChartController", () => {
 
     ctrl.setSymbol("US.NVDA");
     // resetForReload must clear immediately — before any sync() — same as the
-    // candle/volume series, so the old symbol's line never lingers on screen.
+    // candle/Volume series, so the old symbol's line never lingers on screen.
     expect(ind.setDataCalls.at(-1)).toEqual([]);
 
     // The store itself must also be reset (not just the LWC series): if the new
@@ -1538,15 +1557,13 @@ describe("ChartController", () => {
   });
 });
 describe("ChartController main series + facade capabilities", () => {
-  it("mount creates the main series via setMainSeries (kind 'candle') and the volume via addSeries", () => {
+  it("mount creates the main series via setMainSeries (kind 'candle')", () => {
     const facade = fakeFacade();
     const c = new ChartController(facade, LIGHT, { symbol: "US.AAPL", timeframe: "1m" },
       { bars: barReaderOf([]), indicators: emptyIndicators, commands: commandSpy() });
     c.mount();
     expect(facade.mainKind).toBe("candle");
-    // created[0] is the main (candle), created[1] is the volume histogram
     expect(facade.created[0].kind).toBe("candle");
-    expect(facade.created[1].kind).toBe("histogram");
   });
 
   it("exposes screenshot, crosshair subscription, and pane heights", () => {
@@ -1637,7 +1654,7 @@ describe("ChartController indicator hidden + style", () => {
     c.addIndicator({ instanceId: "e1", type: "EMA", params: { period: 9 } });
     c.addIndicator({ instanceId: "m1", type: "MACD", params: withDefaultParams("MACD") });
     // Every series but the candle (created via setMainSeries, kind "candle") is either
-    // the always-on volume overlay or an indicator — both must suppress the axis label.
+    // the Volume Indicator or an engine indicator — both suppress the axis label.
     const nonCandle = facade.created.filter((x) => x.kind !== "candle");
     expect(nonCandle.length).toBeGreaterThan(0);
     for (const s of nonCandle) {
@@ -1770,19 +1787,19 @@ describe("ChartController chart settings", () => {
     expect(facade.lastBands).toEqual([]);
   });
 
-  it("setVolumeVisible(false) hides the volume series", () => {
+  it("hiding Volume hides the series and releases its price-scale band", () => {
     const facade = fakeFacade(); const c = mk(facade); c.mount();
-    c.setVolumeVisible(false);
+    addVolume(c);
+    c.updateIndicator({ instanceId: "c1:VOLUME", type: "VOLUME", params: {}, hidden: true });
     const vol = facade.created.find((x) => x.kind === "histogram")!.series;
     expect(vol.optionCalls.some((o) => (o as { visible?: boolean }).visible === false)).toBe(true);
+    expect(facade.lastOptions).toMatchObject({ rightPriceScale: { scaleMargins: { bottom: 0 } } });
   });
 
   it("a palette switch after hiding volume does not silently re-show it", () => {
-    // Regression: setPalette() re-applies volumeOptions(p) on every theme switch;
-    // without re-asserting the user's visible:false on top of it, a light/dark
-    // toggle would resurrect a volume series the user had explicitly hidden.
     const facade = fakeFacade(); const c = mk(facade); c.mount();
-    c.setVolumeVisible(false);
+    addVolume(c);
+    c.updateIndicator({ instanceId: "c1:VOLUME", type: "VOLUME", params: {}, hidden: true });
     const vol = facade.created.find((x) => x.kind === "histogram")!.series;
     c.setPalette(DARK);
     const lastOptions = vol.optionCalls.at(-1) as { visible?: boolean };
@@ -1801,6 +1818,61 @@ describe("ChartController chart settings", () => {
     expect(facade.watermark).toBe("AAPL");
     c.setWatermark(false);
     expect(facade.watermark).toBeNull();
+  });
+
+  it("adds local Volume from DisplayBar data without engine or store traffic", () => {
+    const facade = fakeFacade();
+    const cmd = commandSpy();
+    let storeReads = 0;
+    const indicators: IndicatorController = {
+      series: () => { storeReads++; return []; },
+      reset: () => { throw new Error("local Volume must not reset the indicator store"); },
+    };
+    const ctrl = new ChartController(facade, LIGHT, { symbol: "US.AAPL", timeframe: "1m" },
+      { bars: barReaderOf([bar("2026-07-08T13:30:00Z", 11)]), indicators, commands: cmd });
+    ctrl.mount();
+    ctrl.addIndicator(defaultVolumeIndicator("c1"));
+    ctrl.sync();
+    expect(cmd.names).toEqual([]);
+    expect(storeReads).toBe(0);
+    expect(facade.created.filter((x) => x.kind === "histogram")).toHaveLength(1);
+  });
+
+  it("uses monochrome Volume colors until Defaults restores directional live colors", () => {
+    const bars = [{ ...bar("2026-07-08T13:30:00Z", 11), o: 10 }];
+    const { facade, ctrl } = make(barReaderOf(bars));
+    ctrl.sync();
+    const volume = facade.created[1].series;
+    ctrl.updateIndicator({ instanceId: "c1:VOLUME", type: "VOLUME", params: {}, styles: { hist: { color: "#F23645" } } });
+    expect(volume.setDataCalls.at(-1)).toEqual([{ time: Date.parse(bars[0].bucketStart) / 1000, value: 100, color: "#F23645" }]);
+
+    bars.push({ ...bar("2026-07-08T13:31:00Z", 10), o: 11 });
+    ctrl.sync();
+    expect(volume.updates.at(-1)).toMatchObject({ color: "#F23645" });
+
+    ctrl.updateIndicator({ instanceId: "c1:VOLUME", type: "VOLUME", params: {}, styles: {} });
+    expect(volume.setDataCalls.at(-1)?.map((point) => (point as { color?: string }).color)).toEqual([LIGHT.volUp, LIGHT.volDown]);
+    ctrl.setPalette(DARK);
+    expect(volume.setDataCalls.at(-1)?.map((point) => (point as { color?: string }).color)).toEqual([DARK.volUp, DARK.volDown]);
+  });
+
+  it("reclaims the Volume band when hidden or removed and restores defaults on re-add", () => {
+    const { facade, ctrl, cmd } = make(barReaderOf([bar("2026-07-08T13:30:00Z", 11)]));
+    const volume = facade.created[1].series;
+    ctrl.updateIndicator({ instanceId: "c1:VOLUME", type: "VOLUME", params: {}, styles: { hist: { hidden: true } } });
+    expect(volume.optionCalls.at(-1)).toMatchObject({ visible: false });
+    expect(facade.lastOptions).toMatchObject({ rightPriceScale: { scaleMargins: { bottom: 0 } } });
+
+    ctrl.updateIndicator(defaultVolumeIndicator("c1"));
+    expect(volume.optionCalls.at(-1)).toMatchObject({ visible: true });
+    expect(facade.lastOptions).toMatchObject({ rightPriceScale: { scaleMargins: { bottom: 0.25 } } });
+
+    ctrl.removeIndicator("c1:VOLUME");
+    expect(cmd.names).not.toContain("UnsubscribeIndicator");
+    ctrl.addIndicator(defaultVolumeIndicator("c1"));
+    ctrl.sync();
+    expect(facade.created.filter((x) => x.kind === "histogram")).toHaveLength(2);
+    expect((facade.created.at(-1)!.series.setDataCalls.at(-1) as { color?: string }[])[0].color).toBe(LIGHT.volUp);
   });
 });
 

@@ -13,6 +13,8 @@ const ema: IndicatorInstance = { instanceId: "e1", type: "EMA", params: { period
 const resolved = describeIndicator(ema, LIGHT);
 const macd: IndicatorInstance = { instanceId: "m1", type: "MACD", params: { fast: 12, slow: 26, signal: 9 } };
 const macdResolved = describeIndicator(macd, LIGHT);
+const volume: IndicatorInstance = { instanceId: "v1", type: "VOLUME", params: {} };
+const volumeResolved = describeIndicator(volume, LIGHT);
 
 describe("IndicatorSettingsDialog", () => {
   it("shows an Inputs tab with a number input per param", () => {
@@ -77,5 +79,17 @@ describe("IndicatorSettingsDialog", () => {
     }));
     const applied = onApply.mock.calls[0][0] as IndicatorInstance;
     expect(applied.styles?.macd?.hidden).toBeUndefined();
+  });
+
+  it("shows only Show and Color for a histogram and Defaults clears its color", () => {
+    const onApply = vi.fn();
+    render(<IndicatorSettingsDialog chrome={chrome} instance={{ ...volume, styles: { hist: { color: "#F23645" } } }} resolved={volumeResolved} onClose={() => {}} onApply={onApply} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Style" }));
+    expect(screen.getByLabelText("hist visible")).toBeTruthy();
+    expect(screen.queryByLabelText("hist width")).toBeNull();
+    expect(screen.queryByLabelText("hist style")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Defaults" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ok" }));
+    expect(onApply).toHaveBeenCalledWith(expect.objectContaining({ styles: {} }));
   });
 });

@@ -312,9 +312,9 @@ describe("ChartPanel", () => {
 
     // Recover the minted instanceId for each panel's VWAP instance from the persisted
     // config patch (persist() always carries the current `indicators` array).
-    type Persisted = { indicators: { instanceId: string }[] };
-    const id1 = (onConfigChange1.mock.calls.at(-1)![0] as Persisted).indicators[0].instanceId;
-    const id2 = (onConfigChange2.mock.calls.at(-1)![0] as Persisted).indicators[0].instanceId;
+    type Persisted = { indicators: { instanceId: string; type: string }[] };
+    const id1 = (onConfigChange1.mock.calls.at(-1)![0] as Persisted).indicators.find((i) => i.type !== "VOLUME")!.instanceId;
+    const id2 = (onConfigChange2.mock.calls.at(-1)![0] as Persisted).indicators.find((i) => i.type !== "VOLUME")!.instanceId;
 
     // Before the fix both would be "VWAP-0" (idSeq is per-panel but unscoped) —
     // colliding in the shared IndicatorStore keyed solely by instanceId.
@@ -860,8 +860,8 @@ describe("ChartPanel", () => {
 
     fireEvent.click(within(container).getByRole("button", { name: "indicators" }));
     fireEvent.click(screen.getByRole("button", { name: "add VWAP" }));
-    type Persisted = { indicators: { instanceId: string }[] };
-    const instanceId = ((onConfigChange.mock.calls.at(-1)![0] as Persisted).indicators[0]).instanceId;
+    type Persisted = { indicators: { instanceId: string; type: string }[] };
+    const instanceId = (onConfigChange.mock.calls.at(-1)![0] as Persisted).indicators.find((i) => i.type !== "VOLUME")!.instanceId;
     expect(commands.sendCommand).toHaveBeenCalledWith("SubscribeIndicator", expect.objectContaining({ instanceId }));
     expect(commands.sendQuery.mock.calls.filter(([name]) => name === "QueryChartWindow")).toHaveLength(0);
 
@@ -919,8 +919,8 @@ describe("ChartPanel", () => {
 
     fireEvent.click(within(container).getByRole("button", { name: "indicators" }));
     fireEvent.click(screen.getByRole("button", { name: "add VWAP" }));
-    type Persisted = { indicators: { instanceId: string }[] };
-    const instanceId = ((onConfigChange.mock.calls.at(-1)![0] as Persisted).indicators[0]).instanceId;
+    type Persisted = { indicators: { instanceId: string; type: string }[] };
+    const instanceId = (onConfigChange.mock.calls.at(-1)![0] as Persisted).indicators.find((i) => i.type !== "VOLUME")!.instanceId;
     act(() => stores.health.apply({ kind: "delta", topic: "sys.events", payload: {
       seq: 2, ts: "2026-08-03T01:00:01Z", kind: "indicator-ready", detail: instanceId,
     } }));
@@ -947,8 +947,8 @@ describe("ChartPanel", () => {
     commands.sendQuery.mockClear();
     fireEvent.click(within(container).getByRole("button", { name: "indicators" }));
     fireEvent.click(screen.getByRole("button", { name: "add VWAP" }));
-    type Persisted = { indicators: { instanceId: string }[] };
-    const instanceId = ((onConfigChange.mock.calls.at(-1)![0] as Persisted).indicators[0]).instanceId;
+    type Persisted = { indicators: { instanceId: string; type: string }[] };
+    const instanceId = (onConfigChange.mock.calls.at(-1)![0] as Persisted).indicators.find((i) => i.type !== "VOLUME")!.instanceId;
     const points = [{ timeMs: fromMs, value: 100.25 }];
     commands.sendQuery.mockImplementation(async (name: string, raw: unknown) => {
       if (name !== "QueryChartWindow") return [];
@@ -992,8 +992,8 @@ describe("ChartPanel", () => {
 
     fireEvent.click(within(container).getByRole("button", { name: "indicators" }));
     fireEvent.click(screen.getByRole("button", { name: "add VWAP" }));
-    type Persisted = { indicators: { instanceId: string }[] };
-    const instanceId = ((onConfigChange.mock.calls.at(-1)![0] as Persisted).indicators[0]).instanceId;
+    type Persisted = { indicators: { instanceId: string; type: string }[] };
+    const instanceId = (onConfigChange.mock.calls.at(-1)![0] as Persisted).indicators.find((i) => i.type !== "VOLUME")!.instanceId;
     const points = [{ timeMs: fromMs, value: 100.25 }];
     let resolveRetry!: (result: object) => void;
     const retry = new Promise<object>((resolve) => { resolveRetry = resolve; });
@@ -1033,8 +1033,8 @@ describe("ChartPanel", () => {
     commands.sendQuery.mockClear();
     fireEvent.click(within(container).getByRole("button", { name: "indicators" }));
     fireEvent.click(screen.getByRole("button", { name: "add VWAP" }));
-    type Persisted = { indicators: { instanceId: string }[] };
-    const instanceId = ((onConfigChange.mock.calls.at(-1)![0] as Persisted).indicators[0]).instanceId;
+    type Persisted = { indicators: { instanceId: string; type: string }[] };
+    const instanceId = (onConfigChange.mock.calls.at(-1)![0] as Persisted).indicators.find((i) => i.type !== "VOLUME")!.instanceId;
     fireEvent.mouseEnter(screen.getByTestId(`legend-row-${instanceId}`));
     fireEvent.click(screen.getByRole("button", { name: `remove ${instanceId}` }));
     act(() => stores.health.apply({ kind: "delta", topic: "sys.events", payload: {
@@ -1044,7 +1044,9 @@ describe("ChartPanel", () => {
 
     expect(commands.sendQuery.mock.calls.filter(([name]) => name === "QueryChartWindow")).toHaveLength(0);
     expect(stores.indicators.series(instanceId)).toEqual([]);
-    expect(onConfigChange).toHaveBeenLastCalledWith({ indicators: [] });
+    expect(onConfigChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      indicators: [expect.objectContaining({ instanceId: "c1:VOLUME", type: "VOLUME" })],
+    }));
   });
 
   it("hydrates multiple indicators independently by instance and series key", async () => {
@@ -1258,7 +1260,9 @@ describe("ChartPanel", () => {
     chartApi.removeSeries.mockClear();
     fireEvent.click(getByRole("button", { name: "close pane 1" }));
     expect(chartApi.removeSeries).toHaveBeenCalledTimes(3); // macd, signal, hist
-    expect(onConfigChange).toHaveBeenLastCalledWith(expect.objectContaining({ indicators: [] }));
+    expect(onConfigChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      indicators: [expect.objectContaining({ instanceId: "c1:VOLUME", type: "VOLUME" })],
+    }));
     expect(screen.queryByRole("button", { name: "close pane 1" })).toBeNull(); // pane gone from the legend
   });
 

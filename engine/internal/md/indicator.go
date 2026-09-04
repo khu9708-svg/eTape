@@ -16,11 +16,10 @@ import (
 type IndicatorType string
 
 const (
-	IndVWAP   IndicatorType = "VWAP"
-	IndEMA    IndicatorType = "EMA"
-	IndSMA    IndicatorType = "SMA"
-	IndMACD   IndicatorType = "MACD"
-	IndVolume IndicatorType = "VOLUME"
+	IndVWAP IndicatorType = "VWAP"
+	IndEMA  IndicatorType = "EMA"
+	IndSMA  IndicatorType = "SMA"
+	IndMACD IndicatorType = "MACD"
 )
 
 // IndicatorSpec identifies what an instance computes.

@@ -2,10 +2,14 @@
 import type { Bar } from "../../../wire/contract";
 import type { IndicatorReader } from "../../../render/chart/ChartController";
 import type { Palette } from "../../../render/palette";
-import { INDICATOR_CATALOG, withDefaultParams, describeIndicator, type IndicatorInstance } from "../../../render/chart/indicatorSeries";
+import {
+  INDICATOR_CATALOG, volumeColorFor, volumeIsVisible, withDefaultParams, describeIndicator,
+  type IndicatorInstance,
+} from "../../../render/chart/indicatorSeries";
 
 export interface LegendIndicatorRow {
   instanceId: string; label: string; paneIndex: number; values: (number | null)[]; colors: string[];
+  hidden?: boolean; slotHidden?: boolean[];
   // MACD only: "open" when the fast (macd) line is at/above the slow (signal)
   // line at this bar, "close" when below, null when either value is missing
   // or the indicator isn't MACD.
@@ -13,7 +17,8 @@ export interface LegendIndicatorRow {
 }
 export interface LegendView {
   o: number | null; h: number | null; l: number | null; c: number | null; changePct: number | null; up: boolean;
-  volume: number | null; barState: "volumeOnly" | "noTrade" | null; indicators: LegendIndicatorRow[];
+  volume: number | null; volumeColor?: string | null; volumeHidden?: boolean;
+  barState: "volumeOnly" | "noTrade" | null; indicators: LegendIndicatorRow[];
 }
 
 type LegendBar = Bar & { synthetic?: boolean; dataGap?: boolean };
@@ -49,9 +54,11 @@ export function computeLegendView(
   const prev = b && i > 0 && !bars[i - 1].dataGap ? bars[i - 1] : null;
   const barMs = b ? Date.parse(b.bucketStart) : NaN;
   const changePct = b && prev && prev.c !== 0 ? ((b.c - prev.c) / prev.c) * 100 : null;
-  const indicators: LegendIndicatorRow[] = instances.map((inst) => {
+  const volumeInst = instances.find((inst) => inst.type === "VOLUME");
+  const indicators: LegendIndicatorRow[] = instances.filter((inst) => inst.type !== "VOLUME").map((inst) => {
     const descs = describeIndicator(inst, palette);
     const values = descs.map((d) => (b ? valueAt(reader.series(d.key), barMs) : null));
+    const slotHidden = descs.map((d) => d.hidden);
     // Slot order is fixed by INDICATOR_CATALOG.MACD: [0]=macd (fast), [1]=signal (slow).
     const [fast, slow] = values;
     const signal: "open" | "close" | null =
@@ -62,12 +69,17 @@ export function computeLegendView(
       paneIndex: INDICATOR_CATALOG[inst.type].slots[0].paneIndex,
       values,
       colors: descs.map((d) => d.color),
+      hidden: (inst.hidden ?? false) || slotHidden.every(Boolean),
+      slotHidden,
       signal,
     };
   });
   return {
     o: b?.o ?? null, h: b?.h ?? null, l: b?.l ?? null, c: b?.c ?? null, changePct,
-    up: b ? b.c >= b.o : true, volume: b?.v ?? null,
+    up: b ? b.c >= b.o : true,
+    volume: volumeInst && !volumeIsVisible(volumeInst) ? null : b?.v ?? null,
+    volumeColor: volumeInst && b ? volumeColorFor(volumeInst, palette, b.c >= b.o) : null,
+    volumeHidden: volumeInst ? !volumeIsVisible(volumeInst) : false,
     barState: b?.synthetic ? "noTrade" : b?.volumeOnly ? "volumeOnly" : null,
     indicators,
   };

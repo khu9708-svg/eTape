@@ -56,7 +56,8 @@ export function IndicatorSettingsDialog({ chrome, instance, resolved, onClose, o
         const color = styles[s.slot]?.color ?? cur?.color ?? chrome.accent;
         const width = styles[s.slot]?.width ?? cur?.width ?? 1;
         const ls = styles[s.slot]?.lineStyle ?? cur?.lineStyle ?? "solid";
-        const visible = !(styles[s.slot]?.hidden ?? cur?.hidden ?? false);
+        const visible = !(instance.hidden ?? false) && !(styles[s.slot]?.hidden ?? cur?.hidden ?? false);
+        const histogram = s.kind === "histogram";
         return (
           <div key={s.slot} style={{ borderBottom: `1px solid ${chrome.border}`, paddingBottom: 6, marginBottom: 6 }}>
             <div style={{ color: chrome.muted, marginBottom: 4 }}>{s.slot}</div>
@@ -77,18 +78,20 @@ export function IndicatorSettingsDialog({ chrome, instance, resolved, onClose, o
                 })}
               </div>
             </div>
-            <div style={rowStyle}>
-              <span>Width</span>
-              <input aria-label={`${s.slot} width`} type="number" min={1} max={4} style={numberInput} value={width}
-                onChange={(e) => setStyle(s.slot, { width: Number(e.target.value) })} />
-            </div>
-            <div style={rowStyle}>
-              <span>Line</span>
-              <select aria-label={`${s.slot} style`} style={selectInput} value={ls}
-                onChange={(e) => setStyle(s.slot, { lineStyle: e.target.value as LineStyleName })}>
-                {LINE_STYLE_NAMES.map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </div>
+            {!histogram && <>
+              <div style={rowStyle}>
+                <span>Width</span>
+                <input aria-label={`${s.slot} width`} type="number" min={1} max={4} style={numberInput} value={width}
+                  onChange={(e) => setStyle(s.slot, { width: Number(e.target.value) })} />
+              </div>
+              <div style={rowStyle}>
+                <span>Line</span>
+                <select aria-label={`${s.slot} style`} style={selectInput} value={ls}
+                  onChange={(e) => setStyle(s.slot, { lineStyle: e.target.value as LineStyleName })}>
+                  {LINE_STYLE_NAMES.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
+            </>}
           </div>
         );
       })}

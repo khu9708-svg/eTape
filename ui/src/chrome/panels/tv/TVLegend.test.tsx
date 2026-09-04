@@ -10,6 +10,7 @@ import type { IndicatorInstance } from "../../../render/chart/indicatorSeries";
 afterEach(cleanup);
 const chrome = getTvChrome("light");
 const ema: IndicatorInstance = { instanceId: "e1", type: "EMA", params: { period: 9 } };
+const volume: IndicatorInstance = { instanceId: "v1", type: "VOLUME", params: {} };
 const macd: IndicatorInstance = { instanceId: "m1", type: "MACD", params: { fast: 12, slow: 26, signal: 9 } };
 
 // jsdom/cssstyle normalizes hex assignments to rgb() on readback; run every
@@ -20,7 +21,7 @@ const cssColor = (hex: string): string => {
   return div.style.color;
 };
 
-function Harness({ onToggle, hRef, instances = [ema], floatShares = null, onClosePane = () => {}, onToggleCollapsePane = () => {} }: {
+function Harness({ onToggle, hRef, instances = [ema, volume], floatShares = null, onClosePane = () => {}, onToggleCollapsePane = () => {} }: {
   onToggle: (id: string) => void; hRef: MutableRefObject<TVLegendHandle | null>;
   instances?: IndicatorInstance[]; floatShares?: number | null;
   onClosePane?: (paneIndex: number) => void; onToggleCollapsePane?: (paneIndex: number) => void;
@@ -56,6 +57,46 @@ describe("TVLegend", () => {
     const volume = screen.getByTestId("legend-vol");
     expect(float.textContent).toBe("12.3M");
     expect(float.compareDocumentPosition(volume) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("renders the canonical Volume row with the plotted bar color", () => {
+    const hRef: { current: TVLegendHandle | null } = { current: null };
+    render(<Harness onToggle={() => {}} hRef={hRef} />);
+    hRef.current!.update({ o: 10, h: 12, l: 9.5, c: 11.5, changePct: 1.2, up: true, volume: 1_240_000,
+      volumeColor: "#F23645", barState: null, indicators: [] });
+    expect(screen.getByTestId("legend-row-v1").textContent).toContain("Vol");
+    expect(screen.getByTestId("legend-vol").textContent).toBe("1.24M");
+    expect(screen.getByTestId("legend-vol").style.color).toBe(cssColor("#F23645"));
+  });
+
+  it("mutes a hidden Volume row and suppresses its value", () => {
+    const hRef: { current: TVLegendHandle | null } = { current: null };
+    render(<Harness onToggle={() => {}} hRef={hRef} instances={[{ ...volume, hidden: true }]} />);
+    hRef.current!.update({ o: 10, h: 12, l: 9.5, c: 11.5, changePct: 1.2, up: true, volume: 1_240_000,
+      volumeHidden: true, barState: null, indicators: [] });
+    expect(screen.getByTestId("legend-vol").textContent).toBe("");
+    expect((screen.getByTestId("legend-row-v1").firstElementChild as HTMLElement).style.color).toBe(cssColor(chrome.muted));
+  });
+
+  it("suppresses only a hidden indicator output", () => {
+    const hRef: { current: TVLegendHandle | null } = { current: null };
+    render(<Harness onToggle={() => {}} hRef={hRef} instances={[{ ...macd, styles: { hist: { hidden: true } } }]} />);
+    hRef.current!.update({ o: 10, h: 12, l: 9.5, c: 11.5, changePct: 1.2, up: true, volume: null, barState: null,
+      indicators: [{ instanceId: "m1", label: "MACD 12 26 9", paneIndex: 1, values: [0.5, 0.3, 0.2],
+        colors: [chrome.accent, chrome.accent, chrome.accent], slotHidden: [false, false, true], signal: "open" }] });
+    expect(screen.getByTestId("legend-ind-m1-0").textContent).toBe("0.50");
+    expect(screen.getByTestId("legend-ind-m1-2").textContent).toBe("");
+    expect(screen.getByTestId("legend-sig-m1").textContent).toBe("POSITIVE");
+  });
+
+  it("suppresses the MACD signal badge when every output is hidden", () => {
+    const hRef: { current: TVLegendHandle | null } = { current: null };
+    render(<Harness onToggle={() => {}} hRef={hRef} instances={[{ ...macd,
+      styles: { macd: { hidden: true }, signal: { hidden: true }, hist: { hidden: true } } }]} />);
+    hRef.current!.update({ o: 10, h: 12, l: 9.5, c: 11.5, changePct: 1.2, up: true, volume: null, barState: null,
+      indicators: [{ instanceId: "m1", label: "MACD 12 26 9", paneIndex: 1, values: [0.5, 0.3, 0.2],
+        colors: [chrome.accent, chrome.accent, chrome.accent], hidden: true, slotHidden: [true, true, true], signal: "open" }] });
+    expect(screen.getByTestId("legend-sig-m1").textContent).toBe("");
   });
 
   it.each([

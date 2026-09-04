@@ -3,15 +3,29 @@ import { useState } from "react";
 import { TVDialog } from "./TVDialog";
 import type { TvChrome } from "../../../render/chart/tvTheme";
 
-export interface ChartSettings { sessionShading: boolean; grid: boolean; volume: boolean; watermark: boolean; barCloseTimer: boolean }
-export const DEFAULT_CHART_SETTINGS: ChartSettings = { sessionShading: true, grid: true, volume: true, watermark: false, barCloseTimer: true };
+export interface ChartSettings { sessionShading: boolean; grid: boolean; watermark: boolean; barCloseTimer: boolean }
+export const DEFAULT_CHART_SETTINGS: ChartSettings = { sessionShading: true, grid: true, watermark: false, barCloseTimer: true };
+
+export function normalizeChartSettings(raw: unknown): ChartSettings {
+  const source = typeof raw === "object" && raw !== null ? raw as Partial<ChartSettings> : {};
+  return {
+    sessionShading: source.sessionShading !== false,
+    grid: source.grid !== false,
+    watermark: source.watermark === true,
+    barCloseTimer: source.barCloseTimer !== false,
+  };
+}
+
+export function chartSettingsRollbackProjection(raw: unknown, settings: ChartSettings): Record<string, unknown> {
+  const source = typeof raw === "object" && raw !== null ? raw as Record<string, unknown> : {};
+  return { ...source, ...settings, volume: false };
+}
 
 export interface ChartSettingsDialogProps { chrome: TvChrome; settings: ChartSettings; onClose: () => void; onApply: (s: ChartSettings) => void }
 
 const TOGGLES: { key: keyof ChartSettings; label: string }[] = [
   { key: "sessionShading", label: "session shading" },
   { key: "grid", label: "grid" },
-  { key: "volume", label: "volume" },
   { key: "watermark", label: "symbol watermark" },
   { key: "barCloseTimer", label: "bar-close timer" },
 ];

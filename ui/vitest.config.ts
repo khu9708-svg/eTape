@@ -42,6 +42,7 @@ export default defineConfig({
             'src/render/chart/barClose.test.ts',
             'src/render/chart/ChartController.test.ts',
             'src/render/chart/chartTheme.test.ts',
+            'src/render/chart/indicatorSeries.test.ts',
             'src/render/chart/sessions.test.ts',
             'src/render/ladder/ladderState.test.ts',
             'src/render/tape/tapeState.test.ts',
@@ -53,7 +54,12 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'chart-panel',
-          include: ['src/chrome/panels/ChartPanel.test.tsx', 'src/chrome/panels/tv/BarCloseTimer.test.tsx', 'src/chrome/panels/tv/TVLegend.test.tsx'],
+          include: [
+            'src/chrome/panels/ChartPanel.test.tsx', 'src/chrome/panels/tv/BarCloseTimer.test.tsx',
+            'src/chrome/panels/tv/ChartHeaderControls.test.tsx', 'src/chrome/panels/tv/ChartSettingsDialog.test.tsx',
+            'src/chrome/panels/tv/IndicatorPickerPopover.test.tsx', 'src/chrome/panels/tv/IndicatorSettingsDialog.test.tsx',
+            'src/chrome/panels/tv/TVLegend.test.tsx',
+          ],
         },
       },
       {

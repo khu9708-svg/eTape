@@ -499,7 +499,13 @@ describe("AppShell Monitoring Scanner Sync", () => {
     } }));
     await waitFor(() => {
       const latest = saved[saved.length - 1];
-      expect(latest?.panels.find((panel) => panel.id === "m-chart-red")?.settings).toEqual({ timeframe: "1m", symbol: "US.A" });
+      expect(latest?.panels.find((panel) => panel.id === "m-chart-red")?.settings).toMatchObject({
+        timeframe: "1m",
+        symbol: "US.A",
+        chartIndicatorModelVersion: 1,
+        chartSettings: expect.objectContaining({ volume: false }),
+        indicators: [expect.objectContaining({ instanceId: "m-chart-red:VOLUME", type: "VOLUME" })],
+      });
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Disable Scanner Sync" }));

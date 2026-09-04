@@ -4,6 +4,10 @@ import { INDICATOR_LINE_WIDTH } from "./chartTheme";
 
 export type IndicatorType = "VWAP" | "EMA" | "SMA" | "MACD" | "VOLUME";
 
+export const CHART_INDICATOR_MODEL_VERSION = 1;
+
+export function volumeInstanceId(panelId: string): string { return `${panelId}:VOLUME`; }
+
 // A per-chart indicator instance. `params` and `colors` are the customizable state,
 // persisted with the workspace (Task 9). `colors` is keyed by slot; unset slots use
 // the palette default (so they re-theme automatically on light/dark switch).
@@ -22,6 +26,10 @@ export interface SlotStyle { color?: string; width?: number; lineStyle?: LineSty
 export interface ParamSpec { key: string; label: string; default: number; min: number; max: number }
 export interface SlotSpec { slot: string; kind: "line" | "histogram"; paneIndex: number; paletteKey: keyof Palette }
 export interface CatalogEntry { type: IndicatorType; label: string; params: ParamSpec[]; slots: SlotSpec[] }
+
+export function defaultVolumeIndicator(panelId: string): IndicatorInstance {
+  return { instanceId: volumeInstanceId(panelId), type: "VOLUME", params: {}, hidden: false };
+}
 
 export interface SeriesDescriptor {
   key: string;         // unique LWC series id: instanceId (single-slot) or `${instanceId}#${slot}`
@@ -56,6 +64,84 @@ export const INDICATOR_CATALOG: Record<IndicatorType, CatalogEntry> = {
               { slot: "hist",   kind: "histogram", paneIndex: SUBPANE, paletteKey: "indMacdHist" },
             ] },
 };
+
+export function volumeIsVisible(inst: IndicatorInstance): boolean {
+  return inst.type === "VOLUME" && !(inst.hidden ?? false) && !(inst.styles?.hist?.hidden ?? false);
+}
+
+export function volumeColorFor(inst: IndicatorInstance, p: Palette, up: boolean): string {
+  const override = inst.styles?.hist?.color ?? inst.colors?.hist;
+  return validColor(override) ? override : up ? p.volUp : p.volDown;
+}
+
+interface NormalizedChartIndicators {
+  instances: IndicatorInstance[];
+  changed: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validColor(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isKnownInstance(value: unknown): value is IndicatorInstance {
+  if (!isRecord(value) || typeof value.instanceId !== "string" || typeof value.type !== "string") return false;
+  return INDICATOR_CATALOG[value.type as IndicatorType] !== undefined;
+}
+
+function histogramColor(inst: IndicatorInstance): string | undefined {
+  const styleColor = inst.styles?.hist?.color;
+  if (validColor(styleColor)) return styleColor;
+  const legacyColor = inst.colors?.hist;
+  return validColor(legacyColor) ? legacyColor : undefined;
+}
+
+function canonicalVolume(inst: IndicatorInstance, panelId: string): IndicatorInstance {
+  const hist = inst.styles?.hist;
+  const style: SlotStyle = {};
+  if (validColor(hist?.color)) style.color = hist.color;
+  if (typeof hist?.hidden === "boolean") style.hidden = hist.hidden;
+  return {
+    instanceId: volumeInstanceId(panelId), type: "VOLUME", params: {},
+    ...(typeof inst.hidden === "boolean" ? { hidden: inst.hidden } : {}),
+    ...(Object.keys(style).length > 0 ? { styles: { hist: style } } : {}),
+  };
+}
+
+// Normalizes persisted chart indicators at the Chart Panel boundary. The
+// unversioned branch unions the old built-in toggle with any catalog Volume
+// instances; the current branch only enforces the singleton and stable ID.
+export function normalizeChartIndicators(
+  panelId: string, raw: unknown, modelVersion: unknown, legacyVolumeVisible: unknown,
+): NormalizedChartIndicators {
+  const source = Array.isArray(raw) ? raw.filter(isKnownInstance) : [];
+  const volumes = source.filter((inst) => inst.type === "VOLUME");
+  const generic = source.filter((inst) => inst.type !== "VOLUME");
+  const firstVolumeIndex = source.findIndex((inst) => inst.type === "VOLUME");
+  const insertVolume = (inst: IndicatorInstance): IndicatorInstance[] => {
+    if (firstVolumeIndex < 0) return [...generic, inst];
+    const genericBefore = source.slice(0, firstVolumeIndex).filter((candidate) => candidate.type !== "VOLUME").length;
+    return [...generic.slice(0, genericBefore), inst, ...generic.slice(genericBefore)];
+  };
+
+  if (modelVersion !== CHART_INDICATOR_MODEL_VERSION) {
+    const visibleAdded = volumes.find((inst) => volumeIsVisible(inst));
+    const visible = legacyVolumeVisible !== false || visibleAdded !== undefined;
+    const coloredAdded = volumes.find((inst) => volumeIsVisible(inst) && histogramColor(inst) !== undefined);
+    const color = coloredAdded ? histogramColor(coloredAdded) : undefined;
+    const canonical = { ...defaultVolumeIndicator(panelId), hidden: !visible,
+      ...(color ? { styles: { hist: { color } } } : {}) };
+    return { instances: insertVolume(canonical), changed: true };
+  }
+
+  const currentVolume = volumes.find((inst) => inst.instanceId === volumeInstanceId(panelId)) ?? volumes[0];
+  const canonical = currentVolume ? canonicalVolume(currentVolume, panelId) : null;
+  const instances = canonical ? insertVolume(canonical) : generic;
+  return { instances, changed: JSON.stringify(instances) !== JSON.stringify(source) };
+}
 
 // Fill any params the user hasn't set with the catalog defaults.
 export function withDefaultParams(type: IndicatorType, params: Record<string, number> = {}): Record<string, number> {

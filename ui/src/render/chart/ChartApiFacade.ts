@@ -22,7 +22,7 @@ export interface ChartApiFacade {
   // Indicator + volume series only (never the main series — no primitives attached).
   addSeries(kind: "line" | "histogram", options: unknown, paneIndex: number): LwcSeries;
   removeSeries(series: LwcSeries): void;
-  // Configure the margins of a price scale by id ("" is the volume overlay scale).
+  // Configure the margins of a price scale by id ("" is the Volume Indicator scale).
   // The right (candle) scale is configured via chart options, not this method.
   setPriceScaleMargins(priceScaleId: string, margins: { top: number; bottom: number }): void;
   setSessionBands(bands: Band[]): void;  // forwarded to the session pane-primitive

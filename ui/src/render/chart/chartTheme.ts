@@ -29,6 +29,7 @@ export interface HistogramOpts {
   priceScaleId: string;
   priceFormat: { type: "volume" };
   color?: string;
+  visible?: boolean;
   lastValueVisible?: boolean;
   priceLineVisible?: boolean;
 }
@@ -94,13 +95,15 @@ function timeFormatter(time: number, timeframe: string): string {
   return `${date} ${ET_PREVIEW_TIME[timeframe === "10s" ? "second" : "minute"].format(ms)}`;
 }
 
-// Volume rides an invisible overlay scale confined to the bottom VOLUME_BAND of
+// The Volume Indicator rides an invisible overlay scale confined to the bottom VOLUME_BAND of
 // the main pane; the candle (right) scale reserves that same band at its bottom
 // so the two never overlap. Without these margins LWC's default scaleMargins let
 // the volume histogram autoscale across ~80% of the pane, swallowing the candles.
 export const VOLUME_BAND = 0.25;
 export const CANDLE_SCALE_MARGINS = { top: 0.08, bottom: VOLUME_BAND } as const;
+export const CANDLE_SCALE_MARGINS_WITHOUT_VOLUME = { top: 0.08, bottom: 0 } as const;
 export const VOLUME_SCALE_MARGINS = { top: 1 - VOLUME_BAND, bottom: 0 } as const;
+export const NO_VOLUME_SCALE_MARGINS = { top: 1, bottom: 0 } as const;
 
 // TradingView draws studies as thin lines behind the price action, not the LWC
 // default (3px, drawn on top). See ChartController's indicator series creation.
@@ -174,7 +177,7 @@ export function chartOptions(p: Palette, timeframe: string): DeepChartOptions {
       horzLine: { color: p.crosshair },
     },
     // Keep the right-axis gutter stable so changing label widths cannot shift the plot.
-    rightPriceScale: { borderColor: p.border, scaleMargins: CANDLE_SCALE_MARGINS, minimumWidth: 32 },
+    rightPriceScale: { borderColor: p.border, scaleMargins: CANDLE_SCALE_MARGINS_WITHOUT_VOLUME, minimumWidth: 32 },
     localization: { timeFormatter: (time) => timeFormatter(time, timeframe) },
     timeScale: {
       borderColor: p.border, rightOffset: RIGHT_OFFSET_BARS, secondsVisible: true, timeVisible: true,
@@ -232,7 +235,7 @@ export function volumeOptions(p: Palette): HistogramOpts {
   void p; // signature parity with chartOptions/candleOptions; volume color is per-bar, not palette-level
   // Overlaid on the main pane, its own invisible scale; per-bar color is set on
   // each data point (up/down) at setData/update time by the controller.
-  // lastValueVisible/priceLineVisible: false — the volume overlay is a background
+  // lastValueVisible/priceLineVisible: false — Volume is a background
   // histogram, not a tracked series; its last-value label's width varies with
   // magnitude (e.g. "1.2M" vs "823.4K") and previously made the shared right axis
   // column (and so the whole plot area) resize/shift as new bars streamed in.

@@ -72,20 +72,8 @@ func newCalc(spec IndicatorSpec) (calc, error) {
 			return nil, err
 		}
 		return &macdCalc{fast: newEMAState(fast), slow: newEMAState(slow), sig: newEMAState(sig)}, nil
-	case IndVolume:
-		return statelessCalc(func(b Bar) float64 { return float64(b.V) }), nil
 	}
 	return nil, fmt.Errorf("md: unknown indicator type %q", spec.Type)
-}
-
-// ---- stateless (VOLUME) ----
-
-type statelessCalc func(Bar) float64
-
-func (statelessCalc) slots() []string { return []string{"hist"} }
-func (statelessCalc) fold(Bar)        {}
-func (f statelessCalc) points(b Bar) []slotPoint {
-	return []slotPoint{{slot: "hist", value: f(b), ok: true}}
 }
 
 // ---- VWAP (session-anchored: resets each ET trading day; pre-market included) ----
