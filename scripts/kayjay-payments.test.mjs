@@ -61,6 +61,28 @@ test('file intent store persists replay across processes/store instances',async(
     await b.put('record',{state:'unknown'});assert.equal((await a.get('record')).state,'unknown');
   } finally {await rm(directory,{recursive:true,force:true});}
 });
+const prodInput={destinationAddress:'0x'+'1'.repeat(40),destinationNetwork:'base',partnerUserRef:'owner-kevin',purchaseCurrency:'USDC',paymentAmount:'10.00',redirectUrl:'https://kayjaytrades.com/wallet/done'};
+function prodApi(send){return createPaymentAdapter({store:memoryStore(),signJwt:async()=>'secret',environment:'production',send});}
+test('production environment uses the kayjaytrades.com domain, owner-prefixed ref, no sandbox param',async()=>{
+  let sent;
+  const api=prodApi(async(_u,req)=>{sent=JSON.parse(req.body);return response({order:{orderId:'11111111-1111-1111-1111-111111111111',partnerUserRef:'owner-kevin',status:'CREATED'},paymentLink:{url:'https://pay.coinbase.com/v2/api-onramp/apple-pay?sessionToken=example'}});});
+  const r=await api.coinbaseStart(prodInput,'prod-intent-1');
+  assert.equal(sent.domain,'kayjaytrades.com');
+  assert.equal(sent.redirectUrl,'https://kayjaytrades.com/wallet/done');
+  assert.equal(r.environment,'production');
+  assert.doesNotMatch(r.paymentUrl,/useApplePaySandbox/);
+  assert.equal(r.ownerActionRequired,'OWNER LIVE VERIFY REQUIRED');
+});
+test('production rejects a sandbox-style owner ref',async()=>{
+  assert.throws(()=>prodApi(async()=>response({})).coinbaseStart({...prodInput,partnerUserRef:'sandbox-x'},'p2'),{code:'owner_ref_required'});
+});
+test('production rejects an off-domain redirect URL',async()=>{
+  assert.throws(()=>prodApi(async()=>response({})).coinbaseStart({...prodInput,redirectUrl:'https://evil.example/x'},'p3'),{code:'redirect_invalid'});
+});
+test('production: a Coinbase 403 / not-enabled response surfaces production_approval_required',async()=>{
+  const api=createPaymentAdapter({store:memoryStore(),signJwt:async()=>'secret',environment:'production',send:async()=>({ok:false,status:403,json:async()=>({message:'Onramp is not enabled for this app'})})});
+  await assert.rejects(api.coinbaseQuote({...cb,partnerUserRef:'owner-k'}),e=>e.code==='production_approval_required'&&/PRODUCTION APPROVAL REQUIRED/.test(e.message));
+});
 test('missing authorization fails clearly without sending',async()=>{
   let calls=0;const api=createPaymentAdapter({store:memoryStore(),send:async()=>{calls++;}});
   await assert.rejects(api.coinbaseQuote(cb),{code:'coinbase_auth_required'});

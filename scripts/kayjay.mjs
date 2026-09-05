@@ -122,16 +122,21 @@ export async function tradeAction(request,t=coinbaseTrader()){
   default:throw new TradeError("unsupported_action","Unsupported trade action.");
  }
 }
+export function coinbasePaymentEnvironment(){
+ try{const e=JSON.parse(readFileSync(path.join(homedir(),".eTape","coinbase-payment-env.json"),"utf8"))?.environment;if(["sandbox","production"].includes(e))return e;}catch{/* default below */}
+ return process.env.KAYJAY_COINBASE_ENV==="production"?"production":"sandbox";
+}
 function paymentAdapter(){
- return payments??=createPaymentAdapter({signJwt:(method,resource,host)=>coinbaseJwt(method,resource,coinbaseCredentials(),undefined,host),store:createFileIntentStore(path.join(homedir(),".eTape","payment-intents.json"))});
+ return payments??=createPaymentAdapter({signJwt:(method,resource,host)=>coinbaseJwt(method,resource,coinbaseCredentials(),undefined,host),store:createFileIntentStore(path.join(homedir(),".eTape","payment-intents.json")),environment:coinbasePaymentEnvironment()});
 }
 let cashoutIntents;
 function cashoutStore(){return cashoutIntents??=createFileIntentStore(path.join(homedir(),".eTape","cashout-intents.json"));}
 export async function paymentAction(request,adapter=paymentAdapter()){
  const {action,input={},intentId}=request;
  switch(action){
+  case "fund_env":return {environment:coinbasePaymentEnvironment(),productionDomain:"kayjaytrades.com"};
   case "fund_quote":return adapter.coinbaseQuote(input);
-  case "fund_start":if(request.confirm!==true)throw new PaymentError("confirmation_required","Confirm the sandbox funding details first.");return adapter.coinbaseSandboxStart(input,intentId);
+  case "fund_start":if(request.confirm!==true)throw new PaymentError("confirmation_required","Confirm the funding details first.");return adapter.coinbaseStart(input,intentId);
   case "fund_status":return adapter.coinbaseStatus(input.orderId);
   case "reconcile":return adapter.reconcileIntent(intentId);
   case "cashout_rails":{

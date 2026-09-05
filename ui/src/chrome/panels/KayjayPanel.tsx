@@ -275,9 +275,12 @@ function SandboxPayments(): JSX.Element {
   const [unknown,setUnknown]=useState(false);
   const [started,setStarted]=useState(false);
   const [confirmed,setConfirmed]=useState(false);
-  const details=JSON.stringify({amount,destination,network});
+  const [env,setEnv]=useState<"sandbox"|"production">("sandbox");
+  useEffect(()=>{fetch("/kayjay/payments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"fund_env"})}).then(r=>r.json()).then((d:{environment?:string})=>{if(d.environment==="production")setEnv("production");}).catch(()=>{});},[]);
+  const details=JSON.stringify({amount,destination,network,env});
   const quoted=quotedDetails===details;
   const prefix="kayjay-fund";
+  const isProd=env==="production";
 
   async function request(action:string,input:Record<string,unknown>,confirm=false,existingIntent="") {
     if(busy)return;
@@ -299,7 +302,7 @@ function SandboxPayments(): JSX.Element {
       const response=await fetch("/kayjay/payments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,input,intentId,confirm}),signal:AbortSignal.timeout(18000)});
       const data=await response.json() as PaymentResult;
       if(!response.ok||data.error){
-        const uncertain=!["coinbase_auth_required","coinbase_auth_failed","wallet_required","invalid_amount","sandbox_required","network_required","asset_required","currency_required","confirmation_required","invalid_id","state_busy","state_unavailable","unsupported_action"].includes(data.code??"");
+        const uncertain=!["coinbase_auth_required","coinbase_auth_failed","wallet_required","invalid_amount","sandbox_required","network_required","asset_required","currency_required","confirmation_required","invalid_id","state_busy","state_unavailable","unsupported_action","production_approval_required","owner_ref_required","redirect_invalid"].includes(data.code??"");
         if(mutates)localStorage.setItem(prefix+":"+intentId,uncertain?"unknown":"ready");
         setUnknown(uncertain&&mutates);setMessage(data.error??"Provider request was rejected. No successful payment is confirmed.");return;
       }
@@ -314,30 +317,34 @@ function SandboxPayments(): JSX.Element {
     } finally {setBusy(false);}
   }
   async function fundingInput() {
-    let owner=localStorage.getItem("kayjay-payment-owner");
-    if(!owner){owner="sandbox-"+crypto.randomUUID();localStorage.setItem("kayjay-payment-owner",owner);}
-    return {destinationAddress:destination,destinationNetwork:network,partnerUserRef:owner,purchaseCurrency:"USDC",paymentCurrency:"USD",paymentAmount:amount};
+    const key=isProd?"kayjay-payment-owner-prod":"kayjay-payment-owner";
+    let owner=localStorage.getItem(key);
+    if(!owner){owner=(isProd?"owner-":"sandbox-")+crypto.randomUUID().slice(0,20);localStorage.setItem(key,owner);}
+    return {destinationAddress:destination,destinationNetwork:network,partnerUserRef:owner,purchaseCurrency:"USDC",paymentCurrency:"USD",paymentAmount:amount,
+      ...(isProd?{redirectUrl:`https://kayjaytrades.com/wallet/funded`}:{})};
   }
   async function fund(action:string,confirm=false){
     try{await request(action,await fundingInput(),confirm);}catch{setMessage("Local payment state is unavailable. Enable local storage before starting a sandbox request.");}
   }
-  const paymentLink=(()=>{try{const url=new URL(result?.paymentUrl??"");return url.origin==="https://pay.coinbase.com"&&!url.username&&!url.password&&url.searchParams.get("useApplePaySandbox")==="true"?url.href:null;}catch{return null;}})();
+  const paymentLink=(()=>{try{const url=new URL(result?.paymentUrl??"");return url.origin==="https://pay.coinbase.com"&&!url.username&&!url.password&&(isProd||url.searchParams.get("useApplePaySandbox")==="true")?url.href:null;}catch{return null;}})();
   const fieldStyle={display:"block",margin:"8px 0"};
-  return <details><summary>Fund · Apple Pay · SANDBOX</summary>
-    <p>Test USDC funding through Coinbase Apple Pay. Sandbox checkout does not charge a card or add real funds.</p>
+  return <details><summary>Fund · Apple Pay · {isProd?"PRODUCTION":"SANDBOX"}</summary>
+    {isProd
+      ? <p role="alert">Production funding on kayjaytrades.com. A completed Apple Pay checkout is a real charge (OWNER LIVE VERIFY REQUIRED). If Coinbase has not enabled production Onramp / allowlisted the domain, requests return COINBASE / APPLE PAY PRODUCTION APPROVAL REQUIRED.</p>
+      : <p>Test USDC funding through Coinbase Apple Pay. Sandbox checkout does not charge a card or add real funds.</p>}
     <p>Requires Coinbase CDP Onramp authorization and a destination wallet. Live Apple Pay also requires provider approval, domain verification, and user verification.</p>
     <fieldset disabled={busy} style={{border:0,padding:0}}>
       <label style={fieldStyle}>Amount (USD) <input aria-label="Fund amount USD" inputMode="decimal" value={amount} onChange={event=>{setAmount(event.target.value);setConfirmed(false);}} placeholder="0.00"/></label>
       <label style={fieldStyle}>Destination wallet <input style={{width:"100%",boxSizing:"border-box"}} value={destination} onChange={event=>{setDestination(event.target.value.trim());setConfirmed(false);}} autoComplete="off" spellCheck={false}/></label>
       <label style={fieldStyle}>Network <select value={network} onChange={event=>{setNetwork(event.target.value);setConfirmed(false);}}><option value="base">Base</option><option value="ethereum">Ethereum</option><option value="solana">Solana</option></select></label>
       <p>Asset: USDC</p>
-      <button disabled={!amount||!destination} onClick={()=>{setResult(null);setStarted(false);setConfirmed(false);void fund("fund_quote");}}>Get sandbox quote</button>
+      <button disabled={!amount||!destination} onClick={()=>{setResult(null);setStarted(false);setConfirmed(false);void fund("fund_quote");}}>{isProd?"Get quote":"Get sandbox quote"}</button>
       {result&&quoted&&<>
         <p>Provider status: {result.order?.status??"Quote received"}</p>
         {result.order&&<p>Total: {result.order.paymentTotal??"Unavailable"} {result.order.paymentCurrency??"USD"} · Receive: {result.order.purchaseAmount??"Unavailable"} {result.order.purchaseCurrency??"USDC"}</p>}
         {result.order?.fees&&<p>Quoted fees: {result.order.fees.map((fee,index)=><span key={index}>{index?" + ":""}{fee.amount??"Unavailable"} {fee.currency??""}</span>)}</p>}
         {!started&&!unknown&&<><label style={fieldStyle}><input type="checkbox" checked={confirmed} onChange={event=>setConfirmed(event.target.checked)}/> I confirm these sandbox details for Apple Pay checkout.</label>
-          <button disabled={!confirmed} onClick={()=>void fund("fund_start",true)}>Start Apple Pay sandbox</button></>}
+          <button disabled={!confirmed} onClick={()=>void fund("fund_start",true)}>{isProd?"Start Apple Pay":"Start Apple Pay sandbox"}</button></>}
         {paymentLink&&<p><a href={paymentLink} target="_blank" rel="noopener noreferrer">Open Apple Pay sandbox checkout</a></p>}
         {result.order?.orderId&&<button onClick={()=>void request("fund_status",{orderId:result.order?.orderId})}>Check funding status</button>}
       </>}
