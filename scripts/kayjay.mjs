@@ -1,6 +1,6 @@
 import {coinbaseSnapshot,coinbaseCurrent,coinbaseJwt,coinbaseCredentials} from "./kayjay-coinbase.mjs";
 import {createPaymentAdapter,createFileIntentStore,PaymentError} from "./kayjay-payments.mjs";
-import {discoverCashoutRails,selectCashoutRail,CashoutError} from "./kayjay-cashout.mjs";
+import {discoverCashoutRails,selectCashoutRail,planCashout,createFiatWithdrawal,createOfframpSession,fiatWithdrawalStatus,CashoutError} from "./kayjay-cashout.mjs";
 import {createCoinbaseTrader,TradeError} from "./kayjay-coinbase-trade.mjs";
 import {readFileSync,writeFileSync} from "node:fs";
 import {homedir} from "node:os";
@@ -84,6 +84,8 @@ export async function tradeAction(request,t=coinbaseTrader()){
 function paymentAdapter(){
  return payments??=createPaymentAdapter({signJwt:(method,resource,host)=>coinbaseJwt(method,resource,coinbaseCredentials(),undefined,host),store:createFileIntentStore(path.join(homedir(),".eTape","payment-intents.json"))});
 }
+let cashoutIntents;
+function cashoutStore(){return cashoutIntents??=createFileIntentStore(path.join(homedir(),".eTape","cashout-intents.json"));}
 export async function paymentAction(request,adapter=paymentAdapter()){
  const {action,input={},intentId}=request;
  switch(action){
@@ -99,6 +101,14 @@ export async function paymentAction(request,adapter=paymentAdapter()){
    catch(error){if(!(error instanceof CashoutError))throw error;selection={error:error.message,code:error.code};}
    return {...state,selection};
   }
+  case "cashout_plan":return planCashout({amount:input.amount,instantOnly:input.instantOnly!==false});
+  case "cashout_withdraw":
+   // OWNER LIVE VERIFY REQUIRED — real fiat payout. owner+confirm enforced in the adapter.
+   return createFiatWithdrawal({...input,owner:request.owner,confirm:request.confirm},coinbaseCredentials(),fetch,cashoutStore());
+  case "cashout_session":
+   // OWNER LIVE VERIFY REQUIRED — starts a Coinbase hosted sell flow.
+   return createOfframpSession({...input,owner:request.owner,confirm:request.confirm});
+  case "cashout_status":return fiatWithdrawalStatus(input);
   default:throw new PaymentError("unsupported_action","Unsupported payment action.");
  }
 }

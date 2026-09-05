@@ -35,14 +35,24 @@ async function get(resource, credentials, send) {
   return data;
 }
 
-// Documented payment-method type -> the cash-out rail it can serve.
+// Coinbase Advanced Trade payment-method `type` -> the cash-out rail it serves.
+// Verified against a live account (2026-09-05): real types include
+// WORLDPAY_CARD, COINBASE_FIAT_ACCOUNT, APPLE_PAY, GOOGLE_PAY. APPLE_PAY /
+// GOOGLE_PAY are funding-only and are intentionally not withdrawal rails.
 const RAIL_FOR_TYPE = {
+  WORLDPAY_CARD: "instantCard",
   DEBIT_CARD: "instantCard",
-  FIAT_WALLET: "cdpOfframp",
-  PAYPAL_ACCOUNT: "paypal",
-  PAYPAL: "paypal",
+  FPX_DEBIT: "instantCard",
   RTP: "rtp",
+  REAL_TIME_PAYMENTS: "rtp",
+  PAYPAL: "paypal",
+  PAYPAL_ACCOUNT: "paypal",
+  COINBASE_FIAT_ACCOUNT: "cdpOfframp",
+  FIAT_WALLET: "cdpOfframp",
+  FIAT_ACCOUNT: "cdpOfframp",
+  ACH: "ach",
   ACH_BANK_ACCOUNT: "ach",
+  SEPA: "ach",
   BANK_WIRE: "ach",
 };
 
@@ -60,7 +70,7 @@ function normalizeMethod(row) {
 }
 
 function railFrom(methods, rail, label) {
-  const candidates = methods.filter(m => RAIL_FOR_TYPE[m.type] === rail && m.currency === "USD");
+  const candidates = methods.filter(m => RAIL_FOR_TYPE[m.type] === rail && (m.currency == null || m.currency === "USD"));
   const usable = candidates.find(m => m.verified && m.allowWithdraw && m.id);
   if (usable) {
     return { rail, label, candidate: true, paymentMethodId: usable.id, methodType: usable.type, verified: true, allowWithdraw: true, provider: "coinbase", reason: `Verified withdraw-enabled ${label} payment method on file.` };
@@ -118,4 +128,121 @@ export function selectCashoutRail(state, { instantOnly = true } = {}) {
   }
   if (instantOnly) fail("no_instant_rail", "No eligible instant cash-out rail is available on this Coinbase account. No slower fallback was used.", 409);
   return { selected: null, rail: null };
+}
+
+// --------------------------------------------------------------------------- //
+// Cash-out EXECUTION path. Every function below reaches exactly one owner
+// confirmation and stops: real withdrawals / sell sessions are
+// OWNER LIVE VERIFY REQUIRED. Idempotent on clientId; ambiguous outcome ->
+// unknown, reconcile-only, never a blind retry.
+// --------------------------------------------------------------------------- //
+
+const V2 = "https://api.coinbase.com";
+const AMOUNT = /^\d{1,10}(\.\d{1,8})?$/;
+const CLIENT = /^[a-zA-Z0-9_-]{6,64}$/;
+
+async function v2(method, resource, credentials, send, body) {
+  let jwt;
+  try { jwt = coinbaseJwt(method, resource, credentials, undefined, HOST); }
+  catch { fail("coinbase_auth_required", "Coinbase credentials are UNSET or invalid.", 503); }
+  const serialized = body === undefined ? undefined : JSON.stringify(body);
+  let response;
+  try {
+    response = await send(V2 + resource, {
+      method, redirect: "error", signal: AbortSignal.timeout(12000),
+      headers: { Authorization: "Bearer " + jwt, "Content-Type": "application/json", Accept: "application/json" },
+      ...(serialized ? { body: serialized } : {}),
+    });
+  } catch { fail("coinbase_unavailable", "Coinbase withdrawal endpoint is unreachable; reconcile before retrying.", 502); }
+  if (response.status === 401 || response.status === 403) fail("coinbase_auth_required", "Coinbase rejected the withdrawal authorization.", 401);
+  let data;
+  try { data = await response.json(); } catch { fail("coinbase_invalid_response", "Coinbase withdrawal response was not valid JSON; reconcile.", 502); }
+  if (!response.ok) fail("coinbase_rejected", `Coinbase returned HTTP ${response.status} for the withdrawal request.`, 502);
+  return data;
+}
+
+/**
+ * Build the full cash-out plan for an amount without executing: discover ->
+ * select -> quote (fee/limit from the chosen payment method or a preview call).
+ */
+export async function planCashout({ amount, instantOnly = true }, credentials = coinbaseCredentials(), send = fetch) {
+  if (!AMOUNT.test(String(amount ?? ""))) fail("invalid_amount", "A positive amount with <= 8 decimals is required.");
+  const state = await discoverCashoutRails(credentials, send);
+  const picked = selectCashoutRail(state, { instantOnly });
+  return {
+    amount: String(amount), currency: "USD",
+    selected: picked.selected, rail: picked.rail,
+    quote: picked.rail?.paymentMethodId
+      ? { paymentMethodId: picked.rail.paymentMethodId, note: "Fee and delivery are returned by Coinbase at withdrawal-create time; no standalone preview endpoint for fiat payout rails." }
+      : { note: "CDP Offramp uses a hosted sell session; the sell quote is shown in the hosted flow." },
+    ready: Boolean(picked.selected),
+    ownerActionRequired: "OWNER LIVE VERIFY REQUIRED",
+  };
+}
+
+/**
+ * Create a real fiat withdrawal to a Coinbase payment method (instant card /
+ * RTP / PayPal). OWNER LIVE VERIFY REQUIRED: owner+confirm gate this call.
+ */
+export async function createFiatWithdrawal({ accountId, paymentMethodId, amount, clientId, owner, confirm }, credentials = coinbaseCredentials(), send = fetch, store) {
+  if (owner !== true || confirm !== true) fail("owner_confirmation_required", "Owner confirmation is required to move money out of Coinbase.", 403);
+  if (typeof accountId !== "string" || !accountId) fail("invalid_account", "A Coinbase fiat account id is required.");
+  if (typeof paymentMethodId !== "string" || !paymentMethodId) fail("invalid_payment_method", "A payment method id is required.");
+  if (!AMOUNT.test(String(amount ?? ""))) fail("invalid_amount", "A positive amount is required.");
+  if (!CLIENT.test(clientId ?? "")) fail("invalid_client_id", "A stable client id (6-64 chars) is required.");
+  if (store) {
+    const prior = await store.get(clientId).catch(() => null);
+    if (prior) {
+      if (prior.state === "received" || prior.withdrawalId) return { ...prior, duplicate: true };
+      fail("outcome_unknown", "This client id may already have reached Coinbase. Reconcile the withdrawal before another attempt.", 409);
+    }
+    await store.insertIfAbsent(clientId, { state: "pending", createdAt: new Date().toISOString() }).catch(() => {});
+  }
+  let data;
+  try {
+    data = await v2("POST", `/v2/accounts/${encodeURIComponent(accountId)}/withdrawals`, credentials, send, {
+      amount: String(amount), currency: "USD", payment_method: paymentMethodId, commit: true,
+    });
+  } catch (e) {
+    if (store) await store.put(clientId, { state: "unknown", errorCode: e.code }).catch(() => {});
+    throw e;
+  }
+  const w = data.data ?? data;
+  const result = { withdrawalId: w.id ?? null, status: w.status ?? "unknown", amount: w.amount?.amount ?? String(amount),
+    fee: w.fee?.amount ?? null, payoutAt: w.payout_at ?? null, provider: "coinbase" };
+  if (store) await store.put(clientId, { state: "received", ...result }).catch(() => {});
+  return result;
+}
+
+/** Poll a withdrawal for authoritative status. */
+export async function fiatWithdrawalStatus({ accountId, withdrawalId }, credentials = coinbaseCredentials(), send = fetch) {
+  if (!accountId || !withdrawalId) fail("invalid_id", "accountId and withdrawalId are required.");
+  const data = await v2("GET", `/v2/accounts/${encodeURIComponent(accountId)}/withdrawals/${encodeURIComponent(withdrawalId)}`, credentials, send);
+  const w = data.data ?? data;
+  return { withdrawalId, status: w.status ?? "unknown", amount: w.amount?.amount ?? null, payoutAt: w.payout_at ?? null };
+}
+
+/**
+ * Create a CDP Offramp hosted sell session. Returns the hosted URL for the
+ * owner to complete the sell. OWNER LIVE VERIFY REQUIRED at the hosted flow.
+ */
+export async function createOfframpSession({ amount, asset = "USDC", network = "solana", address, redirectUrl, owner, confirm }, credentials = coinbaseCredentials(), send = fetch) {
+  if (owner !== true || confirm !== true) fail("owner_confirmation_required", "Owner confirmation is required to start a Coinbase sell session.", 403);
+  if (!AMOUNT.test(String(amount ?? ""))) fail("invalid_amount", "A positive amount is required.");
+  if (!["solana", "base", "ethereum"].includes(network)) fail("invalid_network", "Choose a supported network.");
+  if (typeof address !== "string" || !address) fail("invalid_address", "The source wallet address is required.");
+  const token = await v2("POST", "/onramp/v1/token", { ...credentials }, send, {
+    addresses: [{ address, blockchains: [network] }], assets: [asset],
+  }).catch(e => { throw e; });
+  const sessionToken = token.token ?? token.data?.token;
+  if (!sessionToken) fail("coinbase_invalid_response", "Coinbase did not return an Offramp session token.", 502);
+  const url = new URL("https://pay.coinbase.com/v3/sell/input");
+  url.searchParams.set("sessionToken", sessionToken);
+  url.searchParams.set("partnerUserId", address.slice(0, 49));
+  url.searchParams.set("defaultAsset", asset);
+  url.searchParams.set("defaultNetwork", network);
+  url.searchParams.set("presetCryptoAmount", String(amount));
+  if (redirectUrl) { try { const r = new URL(redirectUrl); if (r.protocol === "https:") url.searchParams.set("redirectUrl", r.toString()); } catch { /* ignore bad redirect */ } }
+  return { provider: "coinbase", flow: "cdp_offramp", hostedUrl: url.toString(), sessionCreated: true,
+    ownerActionRequired: "OWNER LIVE VERIFY REQUIRED", note: "Open the hosted sell flow to review the quote and confirm the payout." };
 }

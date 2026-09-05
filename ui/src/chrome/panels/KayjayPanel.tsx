@@ -121,29 +121,61 @@ function CoinbaseTrading(): JSX.Element {
 type CashoutRail = {rail?:string;label?:string;candidate?:boolean;reason?:string;paymentMethodId?:string|null;methodType?:string;requiresSession?:boolean};
 type CashoutState = {error?:string;authenticated?:boolean;country?:string|null;rails?:Record<string,CashoutRail>;selection?:{selected?:string|null;rail?:CashoutRail;error?:string;code?:string}|null};
 
-// Read-only Coinbase cash-out rail discovery. Nothing here moves money — the
-// payout itself is OWNER LIVE VERIFY REQUIRED.
+// Coinbase cash-out: discover -> plan -> owner-confirmed execute. The payout
+// itself is OWNER LIVE VERIFY REQUIRED and fires only on explicit confirm.
 function CashoutRails(): JSX.Element {
   const [state,setState]=useState<CashoutState|null>(null);
   const [busy,setBusy]=useState(false);
+  const [amount,setAmount]=useState("");
+  const [accountId,setAccountId]=useState("");
+  const [address,setAddress]=useState("");
+  const [confirmed,setConfirmed]=useState(false);
+  const [plan,setPlan]=useState<{selected?:string|null;rail?:{paymentMethodId?:string|null};ready?:boolean;error?:string}|null>(null);
+  const [payout,setPayout]=useState<{withdrawalId?:string|null;status?:string;hostedUrl?:string;error?:string}|null>(null);
+  async function post(body:Record<string,unknown>) {
+    const r=await fetch("/kayjay/payments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
+    return r.json();
+  }
   async function load() {
     if(busy)return; setBusy(true);
-    try {
-      const response=await fetch("/kayjay/payments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"cashout_rails",input:{instantOnly:true}}),signal:AbortSignal.timeout(12000)});
-      setState(await response.json() as CashoutState);
-    } catch { setState({error:"Coinbase cash-out discovery is unavailable. No rail is confirmed."}); }
+    try { setState(await post({action:"cashout_rails",input:{instantOnly:true}}) as CashoutState); }
+    catch { setState({error:"Coinbase cash-out discovery is unavailable. No rail is confirmed."}); }
     finally { setBusy(false); }
   }
+  async function doPlan(){ setPayout(null);setConfirmed(false); setPlan(await post({action:"cashout_plan",input:{amount,instantOnly:true}}).catch(()=>({error:"Plan unavailable."}))); }
+  async function execute(){
+    const clientId="kj-cashout-"+Date.now().toString(36);
+    if(plan?.selected==="cdpOfframp"){
+      setPayout(await post({action:"cashout_session",owner:true,confirm:true,input:{amount,asset:"USDC",network:"solana",address}}).catch(()=>({error:"Session start failed."})));
+    } else {
+      setPayout(await post({action:"cashout_withdraw",owner:true,confirm:true,input:{accountId,paymentMethodId:plan?.rail?.paymentMethodId,amount,clientId}}).catch(()=>({error:"Withdrawal failed; reconcile in Coinbase."})));
+    }
+  }
   const order=["instantCard","rtp","paypal","cdpOfframp"];
-  return <details><summary>Cash out · Coinbase rails{state?.selection?.selected?` · best: ${state.selection.selected}`:""}</summary>
-    <p>Coinbase is the only cash-out provider. Rails are discovered from your real Coinbase payment methods; a payout is an owner action.</p>
+  return <details><summary>Cash out · Coinbase{state?.selection?.selected?` · best: ${state.selection.selected}`:""}</summary>
+    <p>Coinbase is the only cash-out provider. Rails come from your real Coinbase payment methods. The payout is OWNER LIVE VERIFY REQUIRED — it runs only when you confirm below.</p>
     <button disabled={busy} onClick={()=>void load()}>{busy?"Checking…":"Discover rails"}</button>
     {state?.error&&<p role="alert">{state.error}</p>}
     {state&&!state.error&&<>
       <p>Coinbase auth: {state.authenticated?"authenticated":"not authenticated"}{state.country?` · ${state.country}`:""}</p>
       <table style={{width:"100%"}}><thead><tr><th>Rail</th><th>Eligible</th><th>Detail</th></tr></thead>
         <tbody>{order.map(key=>{const r=state.rails?.[key];return <tr key={key}><td>{r?.label??key}</td><td>{r?.candidate?"Yes":"No"}</td><td>{r?.reason??"Unknown"}</td></tr>;})}</tbody></table>
-      {state.selection?.error?<p role="alert">{state.selection.error}</p>:state.selection?.selected&&<p>Selected instant rail: <strong>{state.selection.selected}</strong> — a payout requires owner confirmation (OWNER LIVE VERIFY REQUIRED).</p>}
+      <fieldset style={{border:0,padding:0}}>
+        <label style={{display:"block",margin:"4px 0"}}>Amount (USD) <input inputMode="decimal" value={amount} onChange={e=>{setAmount(e.target.value);setPlan(null);}}/></label>
+        <button disabled={!amount} onClick={()=>void doPlan()}>Plan cash-out</button>
+        {plan?.error&&<p role="alert">{plan.error}</p>}
+        {plan?.ready&&<>
+          <p>Rail: <strong>{plan.selected}</strong>. OWNER LIVE VERIFY REQUIRED.</p>
+          {plan.selected==="cdpOfframp"
+            ? <label style={{display:"block",margin:"4px 0"}}>Source wallet address <input value={address} onChange={e=>setAddress(e.target.value.trim())}/></label>
+            : <label style={{display:"block",margin:"4px 0"}}>Coinbase fiat account id <input value={accountId} onChange={e=>setAccountId(e.target.value.trim())}/></label>}
+          <label style={{display:"block",margin:"4px 0"}}><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/> I confirm this live cash-out.</label>
+          <button disabled={!confirmed||(plan.selected==="cdpOfframp"?!address:!accountId)} onClick={()=>void execute()}>Execute cash-out</button>
+        </>}
+        {payout?.error&&<p role="alert">{payout.error}</p>}
+        {payout?.withdrawalId&&<p>Withdrawal {payout.withdrawalId}: {payout.status}</p>}
+        {payout?.hostedUrl&&<p><a href={payout.hostedUrl} target="_blank" rel="noopener noreferrer">Open Coinbase hosted sell</a></p>}
+      </fieldset>
     </>}
   </details>;
 }
