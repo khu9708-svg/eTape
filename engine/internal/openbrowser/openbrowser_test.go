@@ -108,14 +108,13 @@ func TestOwnedChromeCommandUsesPrivateProfile(t *testing.T) {
 	want := []string{
 		chrome,
 		"--app=" + url,
-		"--start-maximized",
 		"--user-data-dir=" + profile,
 		"--remote-debugging-port=0",
 		"--no-first-run",
 		"--no-default-browser-check",
 	}
 	if !slices.Equal(cmd.Args, want) {
-		t.Fatalf("ownedChromeCommand() args = %q, want %q", cmd.Args, want)
+		t.Fatalf("ownedChromeCommand() args = %q, want %q; --start-maximized also maximizes News Reader popups", cmd.Args, want)
 	}
 }
 

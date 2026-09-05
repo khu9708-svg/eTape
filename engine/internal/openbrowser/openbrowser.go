@@ -76,6 +76,7 @@ func OpenOwned(url string) (*OwnedBrowser, error) {
 		_ = os.RemoveAll(profileDir)
 		return nil, openDefault(url)
 	}
+	go maximizeOwnedProcessWindow(cmd.Process.Pid, startToken)
 	done := make(chan struct{})
 	owned := &OwnedBrowser{pid: cmd.Process.Pid, startToken: startToken, profileDir: profileDir, url: url, done: done}
 	go func() {
@@ -282,7 +283,6 @@ func chromeCommand(chrome, url string) *exec.Cmd {
 func ownedChromeCommand(chrome, url, profileDir string) *exec.Cmd {
 	return exec.Command(chrome,
 		"--app="+url,
-		"--start-maximized",
 		"--user-data-dir="+profileDir,
 		"--remote-debugging-port=0",
 		"--no-first-run",

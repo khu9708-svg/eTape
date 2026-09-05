@@ -7,9 +7,53 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
+	"sync"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
+
+var (
+	showWindowAsync     = windows.NewLazySystemDLL("user32.dll").NewProc("ShowWindowAsync")
+	processWindowLookup struct {
+		sync.Mutex
+		pid  uint32
+		hwnd windows.HWND
+	}
+	enumProcessWindow = windows.NewCallback(func(hwnd windows.HWND, _ uintptr) uintptr {
+		var pid uint32
+		_, err := windows.GetWindowThreadProcessId(hwnd, &pid)
+		if err == nil && pid == processWindowLookup.pid && windows.IsWindowVisible(hwnd) {
+			processWindowLookup.hwnd = hwnd
+			return 0
+		}
+		return 1
+	})
+)
+
+func visibleProcessWindow(pid uint32) windows.HWND {
+	processWindowLookup.Lock()
+	defer processWindowLookup.Unlock()
+	processWindowLookup.pid = pid
+	processWindowLookup.hwnd = 0
+	_ = windows.EnumWindows(enumProcessWindow, nil)
+	return processWindowLookup.hwnd
+}
+
+func maximizeOwnedProcessWindow(pid int, startToken uint64) {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		exists, err := ownedProcessExists(pid, startToken)
+		if err != nil || !exists {
+			return
+		}
+		if hwnd := visibleProcessWindow(uint32(pid)); hwnd != 0 {
+			_, _, _ = showWindowAsync.Call(uintptr(hwnd), windows.SW_MAXIMIZE)
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
 
 func ownedProcessStartTime(pid int) (uint64, error) {
 	token, exists, err := ownedProcessState(pid)

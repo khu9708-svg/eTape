@@ -4,6 +4,8 @@ Platform adapter opening the local UI URL after server readiness. Windows startu
 uses an isolated Chrome app profile whose PID/start token and startup URL are
 handed across engine restarts. Final clean exit closes only the startup page
 through Chrome's loopback DevTools endpoint; child workspace pages remain open.
+The owned adapter maximizes only the startup app window after launch; it does not
+use Chrome's process-wide maximize flag, so child News Reader popups honor their size.
 The temporary profile is removed after the owned Chrome process exits. The
 tray's manual “Open eTape” action remains unowned. If Chrome is unavailable,
 startup falls back to the Windows URL handler; macOS uses `open`, and other
