@@ -1,4 +1,7 @@
-import {coinbaseSnapshot,coinbaseCurrent} from "./kayjay-coinbase.mjs";
+import {coinbaseSnapshot,coinbaseCurrent,coinbaseJwt,coinbaseCredentials} from "./kayjay-coinbase.mjs";
+import {createPaymentAdapter,createFileIntentStore,PaymentError} from "./kayjay-payments.mjs";
+import {homedir} from "node:os";
+import {createControlIntentStore,createControlForwarder,coordinateExitAll,controlCapabilities} from "./kayjay-control.mjs";
 import {connectionState,sourceData,requireLiveAccount} from "./kayjay-state.mjs";
 import {discover,tokenCandles} from "./kayjay-discovery.mjs";
 import {marketSnapshot} from "./kayjay-market.mjs";
@@ -14,6 +17,32 @@ const { WebSocket, WebSocketServer } = require("ws");
 const port = 8687;
 const origin = `http://127.0.0.1:${port}`;
 const projects = path.resolve(root, "../..");
+let payments;
+const controlStore=createControlIntentStore(path.join(homedir(),".eTape"));
+const controls=createControlForwarder({store:controlStore});
+export async function controlAction(request,forwarder=controls){
+ switch(request.action){
+  case "jinx_order":return forwarder.manualJinx(request);
+  case "atlas_exit":return forwarder.exitAtlas(request);
+  case "atlas_cancel":return forwarder.cancelAllAtlas(request);
+  case "atlas_stop":return forwarder.tightenStopAtlas(request);
+  case "exit_all":return coordinateExitAll(request,{store:controlStore});
+  default:throw new Error("Unsupported control action");
+ }
+}
+function paymentAdapter(){
+ return payments??=createPaymentAdapter({signJwt:(method,resource,host)=>coinbaseJwt(method,resource,coinbaseCredentials(),undefined,host),store:createFileIntentStore(path.join(homedir(),".eTape","payment-intents.json"))});
+}
+export async function paymentAction(request,adapter=paymentAdapter()){
+ const {action,input={},intentId}=request;
+ switch(action){
+  case "fund_quote":return adapter.coinbaseQuote(input);
+  case "fund_start":if(request.confirm!==true)throw new PaymentError("confirmation_required","Confirm the sandbox funding details first.");return adapter.coinbaseSandboxStart(input,intentId);
+  case "fund_status":return adapter.coinbaseStatus(input.orderId);
+  case "reconcile":return adapter.reconcileIntent(intentId);
+  default:throw new PaymentError("unsupported_action","Unsupported payment action.");
+ }
+}
 let raptor = { state: "WAITING", text: "Waiting for the existing RAPTOR15 live reader.", updatedAt: null };
 let raptorBusy = false;
 export function allowCommand(message, demo) {
@@ -117,9 +146,26 @@ export function createCockpitServer() {
        return res.end(JSON.stringify(await applyEngineMode(JSON.parse(body))));
       }catch(error){res.writeHead(409);return res.end(JSON.stringify({error:error instanceof Error?error.message:"Mode request failed"}));}
     }
+    if(req.method==="POST"&&req.url==="/kayjay/payments"){
+      res.setHeader("Cache-Control","no-store");res.setHeader("Content-Type","application/json");
+      if(req.headers.origin!==origin||!req.headers["content-type"]?.startsWith("application/json")){res.writeHead(403);return res.end();}
+      try{let body="";for await(const chunk of req){body+=chunk;if(Buffer.byteLength(body)>8192)throw new PaymentError("request_too_large","Payment request too large.",413);}
+        return res.end(JSON.stringify(await paymentAction(JSON.parse(body))));
+      }catch(error){res.writeHead(error instanceof PaymentError?error.status:400);return res.end(JSON.stringify({error:error instanceof PaymentError?error.message:"Payment request failed.",code:error instanceof PaymentError?error.code:"invalid_request"}));}
+    }
+    if(req.method==="POST"&&req.url==="/kayjay/control"){
+      res.setHeader("Cache-Control","no-store");res.setHeader("Content-Type","application/json");
+      if(req.headers.origin!==origin||!req.headers["content-type"]?.startsWith("application/json")){res.writeHead(403);return res.end();}
+      try{let body="";for await(const chunk of req){body+=chunk;if(Buffer.byteLength(body)>4096)throw new Error();}
+        return res.end(JSON.stringify(await controlAction(JSON.parse(body))));
+      }catch{res.writeHead(409);return res.end(JSON.stringify({error:"Control request rejected or unconfirmed. Check authority state before retrying."}));}
+    }
     if (req.method !== "GET") { res.writeHead(405); return res.end(); }
     const url = new URL(req.url, origin);
     res.setHeader("Cache-Control", "no-store");
+    if(url.pathname==="/kayjay/control/capabilities"){
+      res.setHeader("Content-Type","application/json");return res.end(JSON.stringify(controlCapabilities));
+    }
     if (url.pathname === "/kayjay/markets") {
       res.setHeader("Content-Type","application/json");
       try { return res.end(JSON.stringify(await marketSnapshot(url.searchParams.get("symbol") || "BTC",Number(url.searchParams.get("seconds") || 60)))); }

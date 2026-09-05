@@ -8,7 +8,8 @@ if(existsSync(credentialFile))loadEnvFile(credentialFile);
 export function coinbaseCredentials(env=process.env){
  return {name:env.COINBASE_API_KEY_NAME||env.CDP_API_KEY_ID,secret:env.COINBASE_API_PRIVATE_KEY||env.CDP_API_KEY_SECRET};
 }
-export function coinbaseJwt(method,resource,credentials,now=Math.floor(Date.now()/1000)){
+export function coinbaseJwt(method,resource,credentials,now=Math.floor(Date.now()/1000),host="api.coinbase.com"){
+ if(!["api.coinbase.com","api.cdp.coinbase.com"].includes(host))throw new Error("Unsupported Coinbase host");
  if(!credentials.name||!credentials.secret)throw new Error("Coinbase API credentials are UNSET");
  const secret=credentials.secret.replace(/\\n/g,"\n").trim();
  let key;
@@ -22,7 +23,7 @@ export function coinbaseJwt(method,resource,credentials,now=Math.floor(Date.now(
  if(!ed&&(key.asymmetricKeyType!=="ec"||key.asymmetricKeyDetails?.namedCurve!=="prime256v1"))throw new Error("Unsupported Coinbase signing key type");
  const encode=value=>Buffer.from(JSON.stringify(value)).toString("base64url");
  const header=encode({alg:ed?"EdDSA":"ES256",typ:"JWT",kid:credentials.name,nonce:randomBytes(16).toString("hex")});
- const payload=encode({sub:credentials.name,iss:"cdp",nbf:now,exp:now+120,uri:method+" api.coinbase.com"+resource.split("?")[0]});
+ const payload=encode({sub:credentials.name,iss:"cdp",nbf:now,exp:now+120,uri:method+" "+host+resource.split("?")[0]});
  const input=header+"."+payload;
  return input+"."+sign(ed?null:"sha256",Buffer.from(input),ed?key:{key,dsaEncoding:"ieee-p1363"}).toString("base64url");
 }

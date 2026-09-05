@@ -110,6 +110,15 @@ test("Coinbase Ed25519 credentials produce a independently verified signature",(
 
 import {requireLiveAccount} from "./kayjay-state.mjs";
 import {collectCoinbase,readCoinbaseSnapshot} from "./kayjay-coinbase.mjs";
+import {paymentAction,controlAction} from "./kayjay.mjs";
+test("payment and control HTTP dispatch cannot invent provider or execution actions",async()=>{
+ await assert.rejects(()=>paymentAction({action:'fund_start'},{}),/Confirm/);
+ await assert.rejects(()=>paymentAction({action:'transfer'},{}),/Unsupported/);
+ await assert.rejects(()=>paymentAction({action:'cashout_quote'},{}),/Unsupported/);
+ await assert.rejects(()=>controlAction({action:'coinbase_buy'},{}),/Unsupported/);
+ const blocked=await controlAction({action:'exit_all',id:'test-exit-all',owner:true,confirm:true,venues:['JINX','ATLAS','RAPTOR15']});
+ assert.equal(blocked.status,'unsupported');assert.equal(blocked.mutated,false);assert.equal(blocked.venues.length,3);
+});
 const testCoinbaseKey=()=>({name:"test",secret:generateKeyPairSync("ed25519").privateKey.export({format:"der",type:"pkcs8"}).subarray(-32).toString("base64")});
 test("Coinbase follows account pagination and reports a broken continuation incomplete",async()=>{
  let calls=0;const send=async url=>({ok:true,json:async()=>++calls===1?{accounts:[{currency:"USD"}],has_next:true,cursor:"next"}:{accounts:[{currency:"BTC"}],has_next:false}});

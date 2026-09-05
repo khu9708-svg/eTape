@@ -23,6 +23,98 @@ function CoinbaseOrders({label,orders,complete}:{label:string;orders:CoinbaseOrd
   </section>;
 }
 
+type PaymentResult = {
+  error?:string;code?:string;message?:string;state?:string;paymentUrl?:string;
+  order?:{orderId?:string;status?:string;paymentTotal?:string;paymentCurrency?:string;purchaseAmount?:string;purchaseCurrency?:string;fees?:{amount?:string;currency?:string}[]};
+};
+
+// Coinbase Onramp / Apple Pay sandbox funding. Coinbase is the sole payment
+// provider. Cash-out (Coinbase off-ramp rails) is a separate control.
+function SandboxPayments(): JSX.Element {
+  const [amount,setAmount]=useState("");
+  const [destination,setDestination]=useState("");
+  const [network,setNetwork]=useState("base");
+  const [result,setResult]=useState<PaymentResult|null>(null);
+  const [quotedDetails,setQuotedDetails]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [message,setMessage]=useState("");
+  const [lastIntent,setLastIntent]=useState("");
+  const [unknown,setUnknown]=useState(false);
+  const [started,setStarted]=useState(false);
+  const [confirmed,setConfirmed]=useState(false);
+  const details=JSON.stringify({amount,destination,network});
+  const quoted=quotedDetails===details;
+  const prefix="kayjay-fund";
+
+  async function request(action:string,input:Record<string,unknown>,confirm=false,existingIntent="") {
+    if(busy)return;
+    setBusy(true);setMessage("Waiting for the provider…");
+    let intentId=existingIntent;
+    const mutates=action==="fund_start";
+    try {
+      if(mutates){
+        // Stable per details, across refreshes/tabs. A timeout never creates a new request ID.
+        const bytes=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify({action,input})));
+        intentId="face_"+Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,"0")).join("");
+        setLastIntent(intentId);
+        const saved=localStorage.getItem(prefix+":"+intentId);
+        if(saved==="unknown"||saved==="pending"){
+          setUnknown(true);setMessage("This request may already have reached the provider. Use Check previous request before another attempt.");return;
+        }
+        localStorage.setItem(prefix+":"+intentId,"pending");
+      }
+      const response=await fetch("/kayjay/payments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,input,intentId,confirm}),signal:AbortSignal.timeout(18000)});
+      const data=await response.json() as PaymentResult;
+      if(!response.ok||data.error){
+        const uncertain=!["coinbase_auth_required","coinbase_auth_failed","wallet_required","invalid_amount","sandbox_required","network_required","asset_required","currency_required","confirmation_required","invalid_id","state_busy","state_unavailable","unsupported_action"].includes(data.code??"");
+        if(mutates)localStorage.setItem(prefix+":"+intentId,uncertain?"unknown":"ready");
+        setUnknown(uncertain&&mutates);setMessage(data.error??"Provider request was rejected. No successful payment is confirmed.");return;
+      }
+      if(mutates)localStorage.setItem(prefix+":"+intentId,"received");
+      setResult(data);setUnknown(data.state==="unknown");
+      if(action==="fund_quote"){setQuotedDetails(details);setConfirmed(false);setStarted(false);}
+      if(action==="fund_start")setStarted(true);
+      setMessage(data.message??(data.paymentUrl?"Sandbox checkout is ready. Open Apple Pay using the link below.":"Provider response received. See its status below; a quote is not a completed payment."));
+    } catch {
+      if(mutates){try{localStorage.setItem(prefix+":"+intentId,"unknown");}catch{/* Preserve the visible unknown outcome. */}}
+      setUnknown(mutates);setMessage(mutates?"Response unavailable. The outcome is unknown; do not submit another payment. Check the previous request.":"Provider status unavailable. No successful payment is confirmed.");
+    } finally {setBusy(false);}
+  }
+  async function fundingInput() {
+    let owner=localStorage.getItem("kayjay-payment-owner");
+    if(!owner){owner="sandbox-"+crypto.randomUUID();localStorage.setItem("kayjay-payment-owner",owner);}
+    return {destinationAddress:destination,destinationNetwork:network,partnerUserRef:owner,purchaseCurrency:"USDC",paymentCurrency:"USD",paymentAmount:amount};
+  }
+  async function fund(action:string,confirm=false){
+    try{await request(action,await fundingInput(),confirm);}catch{setMessage("Local payment state is unavailable. Enable local storage before starting a sandbox request.");}
+  }
+  const paymentLink=(()=>{try{const url=new URL(result?.paymentUrl??"");return url.origin==="https://pay.coinbase.com"&&!url.username&&!url.password&&url.searchParams.get("useApplePaySandbox")==="true"?url.href:null;}catch{return null;}})();
+  const fieldStyle={display:"block",margin:"8px 0"};
+  return <details><summary>Fund · Apple Pay · SANDBOX</summary>
+    <p>Test USDC funding through Coinbase Apple Pay. Sandbox checkout does not charge a card or add real funds.</p>
+    <p>Requires Coinbase CDP Onramp authorization and a destination wallet. Live Apple Pay also requires provider approval, domain verification, and user verification.</p>
+    <fieldset disabled={busy} style={{border:0,padding:0}}>
+      <label style={fieldStyle}>Amount (USD) <input aria-label="Fund amount USD" inputMode="decimal" value={amount} onChange={event=>{setAmount(event.target.value);setConfirmed(false);}} placeholder="0.00"/></label>
+      <label style={fieldStyle}>Destination wallet <input style={{width:"100%",boxSizing:"border-box"}} value={destination} onChange={event=>{setDestination(event.target.value.trim());setConfirmed(false);}} autoComplete="off" spellCheck={false}/></label>
+      <label style={fieldStyle}>Network <select value={network} onChange={event=>{setNetwork(event.target.value);setConfirmed(false);}}><option value="base">Base</option><option value="ethereum">Ethereum</option><option value="solana">Solana</option></select></label>
+      <p>Asset: USDC</p>
+      <button disabled={!amount||!destination} onClick={()=>{setResult(null);setStarted(false);setConfirmed(false);void fund("fund_quote");}}>Get sandbox quote</button>
+      {result&&quoted&&<>
+        <p>Provider status: {result.order?.status??"Quote received"}</p>
+        {result.order&&<p>Total: {result.order.paymentTotal??"Unavailable"} {result.order.paymentCurrency??"USD"} · Receive: {result.order.purchaseAmount??"Unavailable"} {result.order.purchaseCurrency??"USDC"}</p>}
+        {result.order?.fees&&<p>Quoted fees: {result.order.fees.map((fee,index)=><span key={index}>{index?" + ":""}{fee.amount??"Unavailable"} {fee.currency??""}</span>)}</p>}
+        {!started&&!unknown&&<><label style={fieldStyle}><input type="checkbox" checked={confirmed} onChange={event=>setConfirmed(event.target.checked)}/> I confirm these sandbox details for Apple Pay checkout.</label>
+          <button disabled={!confirmed} onClick={()=>void fund("fund_start",true)}>Start Apple Pay sandbox</button></>}
+        {paymentLink&&<p><a href={paymentLink} target="_blank" rel="noopener noreferrer">Open Apple Pay sandbox checkout</a></p>}
+        {result.order?.orderId&&<button onClick={()=>void request("fund_status",{orderId:result.order?.orderId})}>Check funding status</button>}
+      </>}
+      {lastIntent&&<button style={{marginLeft:8}} onClick={()=>void request("reconcile",{},false,lastIntent)}>Check previous request</button>}
+    </fieldset>
+    {message&&<p role={unknown?"alert":"status"}>{message}</p>}
+    {unknown&&<p>Automatic retries are disabled. A missing response does not mean the provider rejected the request.</p>}
+  </details>;
+}
+
 export function KayjayPanel({config}: PanelProps): JSX.Element {
   const {palette} = useTheme();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -124,6 +216,7 @@ export function KayjayPanel({config}: PanelProps): JSX.Element {
     </>}
     {tab==="Settings" && <p>Use Settings in the top bar for the existing eTape settings. Engine authority is controlled in its own system view.</p>}
     {tab==="Accounts" && <>
+      <SandboxPayments/>
       <details><summary>Coinbase account · {coinbaseError?"STALE / UNAVAILABLE":coinbaseAccount?.state??"Checking"}</summary>
         <p>Read only · Refreshes every 30 seconds while Accounts is open.</p>
         {coinbaseError&&<p role="alert">Coinbase refresh failed. Retained data is stale; account readiness is unknown.</p>}
