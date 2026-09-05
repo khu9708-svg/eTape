@@ -102,7 +102,7 @@ export const DARK: Palette = {
   accent: "#C79A4B", ok: "#35B888", warn: "#C79A4B", danger: "#E5455E", demo: "#D671CD",
 };
 
-export const KAYJAY: Palette = { ...DARK, bg:"#040c13",surface:"#08131e",border:"#182d3e",borderStrong:"#2a4458",text:"#ecf5fc",textMuted:"#8ca3b7",grid:"#102331",crosshair:"#3d728e",up:"#00d99b",down:"#ff526b",accent:"#39dcec",ok:"#00df98",danger:"#ff526b",warn:"#f2b65b",demo:"#09263b",volUp:"rgba(0,217,155,.30)",volDown:"rgba(255,82,107,.30)",depthBid:"rgba(0,217,155,.12)",depthAsk:"rgba(255,82,107,.12)" };
+export const KAYJAY: Palette = { ...DARK, bg:"#080808",surface:"#111111",border:"#292929",borderStrong:"#3a3a3a",text:"#eeeeee",textMuted:"#aaaaaa",grid:"#1c1c1c",crosshair:"#666666",up:"#00d99b",down:"#ff526b",accent:"#39dcec",ok:"#00df98",danger:"#ff526b",warn:"#f2b65b",demo:"#09263b",volUp:"rgba(0,217,155,.30)",volDown:"rgba(255,82,107,.30)",depthBid:"rgba(0,217,155,.12)",depthAsk:"rgba(255,82,107,.12)" };
 export function getPalette(mode: ThemeMode): Palette {
   if (typeof document !== "undefined" && document.documentElement.dataset.workstation === "kayjay") return KAYJAY;
   return mode === "dark" ? DARK : LIGHT;

@@ -52,3 +52,23 @@ import {portfolioView} from "./kayjay.mjs";
 test("portfolio projection masks accounts and never converts missing balances to zero",()=>{
  assert.deepEqual(portfolioView({type:"cash",account_number:"12345678"},{total_value:"0",cash:null,crypto_value:"invalid",token:"do-not-return"}),{account:"cash • 5678",total:0,cash:null,crypto:null,currency:"USD"});
 });
+
+import {applyEngineMode} from "./kayjay.mjs";
+import {pairView,tokenCandles,discover} from "./kayjay-discovery.mjs";
+test("mode control requires explicit confirmation and supported engine",async()=>{
+ const unexpected=()=>{throw new Error("Must not contact engine");};
+ await assert.rejects(()=>applyEngineMode({engine:"ATLAS",mode:"AUTO"},unexpected));
+ await assert.rejects(()=>applyEngineMode({engine:"RAPTOR15",mode:"AUTO",confirm:true},unexpected));
+ await assert.rejects(()=>applyEngineMode({engine:"JINX",mode:"OFF",confirm:true},unexpected));
+});
+test("ATLAS mode request obeys existing authority allowed modes",async()=>{
+ const calls=[];const send=async(url,options)=>{calls.push({url,options});return {ok:true,json:async()=>options.method?{mode:"MANUAL"}:{mode:"OFF",allowed_modes:["OFF","MANUAL"]}};};
+ assert.deepEqual(await applyEngineMode({engine:"ATLAS",mode:"MANUAL",confirm:true},send),{mode:"MANUAL"});
+ assert.equal(calls.length,2);assert.deepEqual(JSON.parse(calls[1].options.body),{mode:"MANUAL"});
+ await assert.rejects(()=>applyEngineMode({engine:"ATLAS",mode:"AUTO",confirm:true},send));
+});
+test("discovery identifiers cannot escape fixed provider routes",async()=>{
+ await assert.rejects(()=>tokenCandles("../accounts","test"));await assert.rejects(()=>discover("x".repeat(101),"search"));
+ const p=pairView({chainId:"solana",pairAddress:"pool",baseToken:{symbol:"BONK"},priceUsd:"0.001",volume:{h24:null}});
+ assert.equal(p.price,.001);assert.equal(p.volume,null);
+});

@@ -1,3 +1,4 @@
+import {discover,tokenCandles} from "./kayjay-discovery.mjs";
 import {marketSnapshot} from "./kayjay-market.mjs";
 import http from "node:http";
 import fs from "node:fs/promises";
@@ -85,10 +86,32 @@ async function readRaptor() {
       updatedAt: new Date().toISOString() };
   });
 }
+export async function applyEngineMode(request,send=fetch){
+ const {engine,mode,confirm}=request;
+ if(!["ATLAS","JINX"].includes(engine)||!["OFF","MANUAL","AUTO"].includes(mode)||confirm!==true)throw new Error("Explicit operator confirmation required");
+ if(engine==="JINX"&&mode==="OFF")throw new Error("JINX mode API does not support OFF; use its owner runtime control");
+ const url=engine==="ATLAS"?"http://127.0.0.1:8080/api/execution-mode":"http://127.0.0.1:8794/mode";
+ const before=await send(url,{signal:AbortSignal.timeout(4000)});
+ if(!before.ok)throw new Error("Engine authority unavailable");
+ const current=await before.json();
+ if(!current.mode)throw new Error("Engine mode unknown");
+ if(engine==="ATLAS"&&(!Array.isArray(current.allowed_modes)||!current.allowed_modes.includes(mode)))throw new Error("Engine does not allow this mode");
+ const response=await send(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(engine==="JINX"?{mode,owner:true,confirm:true}:{mode}),signal:AbortSignal.timeout(10000)});
+ if(!response.ok)throw new Error("Engine rejected the request");
+ const result=await response.json();if(result.error)throw new Error("Engine rejected the request; use its control surface for details");
+ return redact(result);
+}
 export function createCockpitServer() {
   const server = http.createServer(async (req,res) => {
     if (req.headers.host !== `127.0.0.1:${port}` || (req.headers.origin && req.headers.origin !== origin)) {
       res.writeHead(403); return res.end("Local cockpit only");
+    }
+    if(req.method==="POST"&&req.url==="/kayjay/mode"){
+      res.setHeader("Cache-Control","no-store");res.setHeader("Content-Type","application/json");
+      if(req.headers.origin!==origin||!req.headers["content-type"]?.startsWith("application/json")){res.writeHead(403);return res.end();}
+      try{let body="";for await(const chunk of req){body+=chunk;if(body.length>1024)throw new Error("Request too large");}
+       return res.end(JSON.stringify(await applyEngineMode(JSON.parse(body))));
+      }catch(error){res.writeHead(409);return res.end(JSON.stringify({error:error instanceof Error?error.message:"Mode request failed"}));}
     }
     if (req.method !== "GET") { res.writeHead(405); return res.end(); }
     const url = new URL(req.url, origin);
@@ -103,10 +126,21 @@ export function createCockpitServer() {
       try{return res.end(JSON.stringify(await robinhoodPortfolio()));}
       catch{res.writeHead(502);return res.end(JSON.stringify({error:"Robinhood portfolio unavailable"}));}
     }
+    if(url.pathname==="/kayjay/token-candles"){
+      res.setHeader("Content-Type","application/json");
+      try{return res.end(JSON.stringify(await tokenCandles(url.searchParams.get("chain")||"",url.searchParams.get("address")||"")));}
+      catch{res.writeHead(502);return res.end(JSON.stringify({error:"Token candles unavailable"}));}
+    }
+    if(url.pathname==="/kayjay/discovery"){
+      res.setHeader("Content-Type","application/json");
+      try{return res.end(JSON.stringify(await discover(url.searchParams.get("q")||"",url.searchParams.get("feed")||"search")));}
+      catch{res.writeHead(502);return res.end(JSON.stringify({error:"Token discovery unavailable"}));}
+    }
     if (url.pathname === "/kayjay/status") {
       const services = await Promise.all([
         probe("Bluelights", "http://127.0.0.1:8787/health", true),
         probe("JINX", "http://127.0.0.1:8794/status"),
+        probe("JINX discovery", "http://127.0.0.1:8794/activity"),
         probe("ATLAS", "http://127.0.0.1:8080/api/execution-mode"),
         probe("Brokers", "http://127.0.0.1:8080/api/broker-readiness"),
         probe("Positions", "http://127.0.0.1:8080/api/positions"),

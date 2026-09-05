@@ -222,7 +222,7 @@ export function AppShell({ workspaceName, stores, scheduler, workspaceStore, lin
     setSourceWorkspace(null);
     if (workspaceName === MONITORING_WORKSPACE_ID) observeScannerSync(undefined);
     void workspaceStore.load(workspaceName, workspaceName === MONITORING_WORKSPACE_ID ? buildMonitoringWorkspace() : workspaceName === "kayjay" ? buildKayjayWorkspace() : undefined).then((w) => {
-      if (workspaceName === "kayjay" && !w.panels.some(p => p.id === "kayjay-markets" && p.settings["cockpitLayout"] === 2)) {
+      if (workspaceName === "kayjay" && !w.panels.some(p => p.id === "kayjay-markets" && p.settings["cockpitLayout"] === 3)) {
         workspaceStore.save({ ...w, name: "kayjay-before-style" });
         w = buildKayjayWorkspace();
         workspaceStore.save(w);

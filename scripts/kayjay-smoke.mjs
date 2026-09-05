@@ -1,36 +1,28 @@
 import assert from "node:assert/strict";
-import {createRequire} from "node:module";
-import path from "node:path";
-import {fileURLToPath} from "node:url";
-const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),"..");
-const require=createRequire(path.join(root,"ui/package.json"));
-const {chromium}=require("@playwright/test");
+import {createRequire} from "node:module";import path from "node:path";import {fileURLToPath} from "node:url";
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),"..");const require=createRequire(path.join(root,"ui/package.json"));const {chromium}=require("@playwright/test");
 const browser=await chromium.launch({channel:"chrome",headless:true});
-try {
- const page=await browser.newPage({viewport:{width:1920,height:1080}});
- const errors=[];page.on("pageerror",e=>errors.push(e.message));
- await page.goto("http://127.0.0.1:8687/?workspace=kayjay");
- await page.getByRole("button",{name:"Health",exact:true}).waitFor({timeout:30000});
- await page.getByText("Bluelights",{exact:true}).waitFor();
- await page.locator(".kayjay-book tbody tr").first().waitFor();
- for (const symbol of ["ETH","SOL","BTC"]) {
-   await page.locator(".kayjay-coin").filter({has:page.getByAltText(symbol+" logo")}).click();
-   await page.waitForFunction(s=>document.querySelector(".kayjay-book tbody tr") && [...document.querySelectorAll(".kayjay-market-toolbar strong")].every(e=>e.textContent.startsWith(s)),symbol);
- }
- assert.equal(await page.locator(".kayjay-coin img").evaluateAll(images=>images.every(i=>i.complete&&i.naturalWidth>0)),true);
- assert.equal(await page.locator(".kayjay-live-chart").isVisible(),true);
- assert.equal(await page.locator(".kayjay-live-chart").evaluate(e=>e.clientWidth>800&&e.clientHeight>200),true);
- await page.getByRole("button",{name:"Accounts",exact:true}).click();
- await page.getByText("Robinhood · Real account values · Read only").waitFor();
- await page.locator(".kayjay-system tbody tr").first().waitFor({timeout:35000});
- assert.ok(await page.locator(".kayjay-system tbody tr").count()>0);
- await page.getByRole("button",{name:"Health",exact:true}).click();
+try{
+ const page=await browser.newPage({viewport:{width:1920,height:1080}});const errors=[];page.on("pageerror",e=>errors.push(e.message));
+ await page.goto("http://127.0.0.1:8687/?workspace=kayjay");await page.getByRole("button",{name:"Health",exact:true}).waitFor({timeout:30000});
+ await page.locator(".kayjay-connections").waitFor();await page.locator(".kayjay-tv iframe").waitFor({timeout:30000});
+ await page.waitForTimeout(5000);
  await page.screenshot({path:path.join(root,"dist/kayjay.png"),fullPage:true});
- await page.setViewportSize({width:1366,height:768});
- await page.waitForTimeout(500);
+ assert.equal(await page.locator(".kayjay-engine-cards article").count(),3);
+ assert.equal(await page.locator(".kayjay-connections>div").count(),5);
+ await page.getByRole("button",{name:"Native chart",exact:true}).click();
+ for(const symbol of ["ETH","SOL","BTC"]){await page.locator(".kayjay-coin").filter({has:page.getByAltText(symbol+" logo")}).click();await page.waitForFunction(s=>document.querySelector(".kayjay-market-toolbar strong")?.textContent.startsWith(s),symbol);}
  assert.equal(await page.locator(".kayjay-live-chart").isVisible(),true);
- assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
+ await page.getByRole("navigation").getByRole("button",{name:"Meme Coins",exact:true}).click();
+ await page.locator(".kayjay-token-results tbody tr").first().waitFor({timeout:30000});
+ await page.getByRole("textbox",{name:"Token name, symbol or contract"}).fill("BONK");await page.getByRole("button",{name:"Search tokens"}).click();
+ await page.waitForResponse(r=>r.url().includes("/kayjay/discovery?feed=search")&&r.status()===200);
+ await page.locator(".kayjay-token-results tbody tr button").first().click();
+ await page.getByLabel("Selected token chart").waitFor(); await page.getByText(/Live 15m candles/).waitFor({timeout:20000});
+ await page.waitForTimeout(5000);await page.screenshot({path:path.join(root,"dist/kayjay-discovery.png"),fullPage:true});
+ await page.getByRole("navigation").getByRole("button",{name:"Dashboard",exact:true}).click();
+ await page.setViewportSize({width:1366,height:768});await page.waitForTimeout(500);
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
  await page.screenshot({path:path.join(root,"dist/kayjay-1366.png"),fullPage:true});
- assert.deepEqual(errors,[]);
- console.log("PASS: live BTC/ETH/SOL switching, loaded coin artwork, visible chart, 1920 and 1366 viewport checks; no page errors.");
-} finally {await browser.close();}
+ assert.deepEqual(errors,[]);console.log("PASS: black cockpit, three engine cards, five connectivity states, TradingView embed, native coin switching, live BONK search and token chart, responsive viewport; no page errors.");
+}finally{await browser.close();}

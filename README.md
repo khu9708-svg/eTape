@@ -511,3 +511,32 @@ BTC/ETH/SOL selection, real image loading, chart visibility and desktop sizes.
 Screenshots and local build/runtime data stay in ignored `dist/`.
 
 The Accounts tab reads all Robinhood portfolios through the existing gateway's get_accounts/get_portfolio tools. Only masked labels and selected value fields are returned. No order tool is exposed. Missing portfolio or P&L values remain unavailable.
+
+### Simple black command center
+
+The owner workspace now defaults to navigation, one chart/discovery surface,
+and one command center. The original practice ticket/account are alternate tabs.
+A saved pre-change layout is retained before migration.
+
+TradingView is the official hosted Advanced Chart widget, explicitly requested
+by Kevin. It is not a signed-in private Supercharts account. Paid account feeds
+and saved private layouts are not connected by this widget. Native Coinbase
+charts remain selectable. No proprietary chart-library source is vendored.
+
+Meme Coins searches DEX Screener by token name, symbol or address. Active meme
+pairs rank PEPE/BONK/WIF/DOGE/SHIB search matches by reported 24h volume; this is
+not an independent verified trending index. New token profiles use the live
+profile endpoint. Details show chain, contract, liquidity and volume. Pool
+candles come from GeckoTerminal into the already-installed chart library.
+Both discovery and pool candles cache for 60 seconds; unavailable data is
+explicit. Sources: https://docs.dexscreener.com/api/reference and
+https://apiguide.geckoterminal.com/.
+
+Mode buttons send only confirmed operator requests to the existing
+ATLAS /api/execution-mode and JINX /mode endpoints. ATLAS allowed_modes are
+checked before forwarding. JINX receives its existing owner/confirm fields.
+JINX OFF is unsupported by its mode endpoint and remains disabled. RAPTOR15
+has no mode authority connected here. Buttons disable when the authority is
+offline; unknown mode is never shown as OFF. No scheduled task is enabled,
+and no actual live mode transition was performed during development.
+JINX /activity is read for its existing discovery feed when available.

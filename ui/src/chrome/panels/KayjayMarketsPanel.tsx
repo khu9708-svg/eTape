@@ -1,3 +1,4 @@
+import {KayjayDiscovery,KayjayTradingView} from "./KayjayDiscovery";
 import {useEffect,useRef,useState} from "react";
 import {CandlestickSeries,ColorType,createChart,HistogramSeries,type IChartApi,type ISeriesApi,type UTCTimestamp} from "lightweight-charts";
 import type {PanelProps} from "./registry";
@@ -9,6 +10,8 @@ let focused="BTC";
 const money=(n:number)=>n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 export function KayjayMarketsPanel({config}:PanelProps):JSX.Element {
  const {palette}=useTheme();
+ const [surface,setSurface]=useState("TradingView");
+ useEffect(()=>{const navigate=(event:Event)=>{const value=(event as CustomEvent<string>).detail;if(value==="Meme Coins")setSurface("Meme Coins");if(value==="Markets"||value==="Dashboard")setSurface("TradingView");};window.addEventListener("kayjay-section",navigate);return()=>window.removeEventListener("kayjay-section",navigate);},[]);
  const [symbol,setSymbol]=useState(focused);
  const [seconds,setSeconds]=useState(60);
  const [data,setData]=useState<Market|null>(null);
@@ -59,7 +62,8 @@ export function KayjayMarketsPanel({config}:PanelProps):JSX.Element {
  },[data,palette]);
  const current=data?.quotes.find(q=>q.symbol===symbol);
  return <div className="kayjay-markets">
-   {!book && <div className="kayjay-coins">{["BTC","ETH","SOL"].map(coin=>{
+   {!book && <div className="kayjay-surface-tabs">{["TradingView","Native chart","Meme Coins"].map(s=><button key={s} aria-pressed={surface===s} onClick={()=>setSurface(s)}>{s}</button>)}</div>}
+   {!book && surface!=="Meme Coins" && <div className="kayjay-coins">{["BTC","ETH","SOL"].map(coin=>{
      const quote=data?.quotes.find(q=>q.symbol===coin);
      return <button key={coin} className="kayjay-coin" aria-pressed={coin===symbol} onClick={()=>{focused=coin;window.dispatchEvent(new Event("kayjay-market"));}}>
        <img src={"/"+images[coin]+".png"} alt={coin+" logo"} width={48} height={48}/>
@@ -67,9 +71,9 @@ export function KayjayMarketsPanel({config}:PanelProps):JSX.Element {
        <em className={quote && (quote.change24h??0)<0?"negative":"positive"}>{quote?.change24h==null?"—":(quote.change24h>=0?"+":"")+quote.change24h.toFixed(2)+"%"}</em>
      </button>;
    })}</div>}
-   <div className="kayjay-market-toolbar">
+   <div className="kayjay-market-toolbar" style={{display:surface==="Meme Coins"&&!book?"none":undefined}}>
      <strong>{symbol} / USD {book?"· Order book":""}</strong>
-     {!book && <div>{[[60,"1m"],[300,"5m"],[900,"15m"],[3600,"1h"],[86400,"1D"]].map(([value,label])=>
+     {!book && surface==="Native chart" && <div>{[[60,"1m"],[300,"5m"],[900,"15m"],[3600,"1h"],[86400,"1D"]].map(([value,label])=>
        <button key={value} aria-pressed={seconds===value} onClick={()=>{setSeconds(Number(value));fitted.current=false;}}>{label}</button>)}</div>}
      <span className={failed?"negative":"positive"}>{failed?"STALE / UNAVAILABLE":data?"LIVE QUOTES":"CONNECTING"}</span>
    </div>
@@ -80,7 +84,7 @@ export function KayjayMarketsPanel({config}:PanelProps):JSX.Element {
        <td>{bid[1]?.toFixed(4)}</td><td className="positive">{money(bid[0])}</td>
        <td className="negative">{data?.asks[i]?money(data.asks[i][0]):"—"}</td><td>{data?.asks[i]?.[1]?.toFixed(4)??"—"}</td>
      </tr>)}</tbody></table>
-   </div> : <div ref={host} className="kayjay-live-chart"/>}
-   <div className="kayjay-feed-caption">{failed?"Feed unavailable; displayed data may be stale.":data?.source??"Coinbase Exchange"} · Quotes / book refresh 5s · {data?new Date(data.asOf).toLocaleTimeString():"Waiting"} · Read only</div>
+   </div> : <><div ref={host} className="kayjay-live-chart" style={{display:surface==="Native chart"?"block":"none"}}/>{surface==="TradingView"&&<KayjayTradingView symbol={symbol}/ >}{surface==="Meme Coins"&&<KayjayDiscovery/>}</>}
+   <div className="kayjay-feed-caption" style={{display:!book&&surface!=="Native chart"?"none":undefined}}>{failed?"Feed unavailable; displayed data may be stale.":data?.source??"Coinbase Exchange"} · Quotes / book refresh 5s · {data?new Date(data.asOf).toLocaleTimeString():"Waiting"} · Read only</div>
  </div>;
 }

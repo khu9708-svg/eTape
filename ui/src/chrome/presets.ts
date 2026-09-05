@@ -239,20 +239,18 @@ export const PRESETS: Preset[] = [
 
 export function buildKayjayWorkspace(): Workspace {
   const base = PRESETS.find(p => p.id === "trading")!.build();
-  const selected = ["chart-977336c7", "t-ticket", "t-account"];
   const panels: PanelConfig[] = [
-    {id:"kayjay-markets",panelId:"kayjay-markets",group:null,settings:{cockpitLayout:2}},
-    {id:"kayjay-book",panelId:"kayjay-markets",group:null,settings:{view:"book"}},
+    {id:"kayjay-nav",panelId:"kayjay",group:null,settings:{view:"nav"}},
+    {id:"kayjay-markets",panelId:"kayjay-markets",group:null,settings:{cockpitLayout:3}},
     {id:"kayjay-systems",panelId:"kayjay",group:null,settings:{}},
-    ...base.panels.filter(p=>selected.includes(p.id)),
+    ...base.panels.filter(p=>["t-ticket","t-account"].includes(p.id)),
   ];
   const leaf=(id:string,size:number,views=[id])=>({type:"leaf" as const,size,data:{id,views,activeView:id}});
   const layout = {
     grid:{width:1920,height:940,orientation:"HORIZONTAL",root:{type:"branch",data:[
-      {type:"branch",size:1260,data:[leaf("kayjay-markets",560,["kayjay-markets","chart-977336c7"]),leaf("kayjay-systems",380)]},
-      {type:"branch",size:660,data:[leaf("kayjay-book",370),leaf("t-ticket",260),leaf("t-account",310)]},
+      leaf("kayjay-nav",180),leaf("kayjay-markets",1180),leaf("kayjay-systems",560,["kayjay-systems","t-ticket","t-account"])
     ]}},
-    panels:Object.fromEntries(panels.map(p=>[p.id,{id:p.id,contentComponent:p.id,title:p.id==="kayjay-markets"?"Live markets":p.id==="kayjay-book"?"Market depth":p.id==="kayjay-systems"?"KAYJAY · Systems":p.id==="t-ticket"?"Practice order ticket":p.id==="t-account"?"Practice account":"eTape practice charts"}])),
+    panels:Object.fromEntries(panels.map(p=>[p.id,{id:p.id,contentComponent:p.id,title:p.id==="kayjay-nav"?"Navigate":p.id==="kayjay-markets"?"Markets & discovery":p.id==="kayjay-systems"?"Command center":p.id==="t-ticket"?"Practice ticket":"Practice account"}])),
     activeGroup:"kayjay-markets",
   } as SerializedDockview;
   return {name:"kayjay",layoutVersion:WORKSPACE_LAYOUT_VERSION,panels,layout,linkVenues:{blue:"sim-paper"}};
