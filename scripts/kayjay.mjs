@@ -26,6 +26,36 @@ export function redact(value) {
       /secret|token|password|api.?key|authorization|private.?key/i.test(k) ? (v ? "SET" : "UNSET") : redact(v)]));
   return value;
 }
+let portfolioCache;
+async function robinhoodRead(tool,args={}) {
+ if(!["get_accounts","get_portfolio"].includes(tool)) throw new Error("Read only");
+ const response=await fetch("http://127.0.0.1:8765/call",{
+  method:"POST",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({agent:"atlas",tool,arguments:args}),signal:AbortSignal.timeout(15000)});
+ if(!response.ok) throw new Error("Gateway unavailable");
+ const payload=await response.json();
+ if(!payload.ok||payload.result?.isError) throw new Error("Broker unavailable");
+ const result=payload.result?.structuredContent ?? JSON.parse(payload.result?.content?.find(c=>c.type==="text")?.text||"{}");
+ if(!result.data) throw new Error("Portfolio unavailable");
+ return result.data;
+}
+export function portfolioView(account,data) {
+ const amount=value=>value!==null&&value!==undefined&&value!==""&&Number.isFinite(Number(value))?Number(value):null;
+ return {account:account.type+" • "+String(account.account_number).slice(-4),
+  total:amount(data.total_value),cash:amount(data.cash),crypto:amount(data.crypto_value),currency:data.currency||"USD"};
+}
+async function robinhoodPortfolio() {
+ if(portfolioCache&&Date.now()-portfolioCache.time<30000)return portfolioCache.promise;
+ const promise=(async()=>{
+  const accounts=await robinhoodRead("get_accounts");
+  return {asOf:new Date().toISOString(),accounts:await Promise.all(accounts.accounts.map(async account=>{
+   try{return portfolioView(account,await robinhoodRead("get_portfolio",{account_number:account.account_number}));}
+   catch{return {...portfolioView(account,{}),error:"Unavailable"};}
+  }))};
+ })();
+ portfolioCache={time:Date.now(),promise};
+ try{return await promise;}catch(error){portfolioCache=undefined;throw error;}
+}
 async function probe(name, url, auth = false) {
   const started = Date.now();
   try {
@@ -67,6 +97,11 @@ export function createCockpitServer() {
       res.setHeader("Content-Type","application/json");
       try { return res.end(JSON.stringify(await marketSnapshot(url.searchParams.get("symbol") || "BTC",Number(url.searchParams.get("seconds") || 60)))); }
       catch { res.writeHead(502); return res.end(JSON.stringify({error:"Market source unavailable"})); }
+    }
+    if(url.pathname==="/kayjay/portfolio"){
+      res.setHeader("Content-Type","application/json");
+      try{return res.end(JSON.stringify(await robinhoodPortfolio()));}
+      catch{res.writeHead(502);return res.end(JSON.stringify({error:"Robinhood portfolio unavailable"}));}
     }
     if (url.pathname === "/kayjay/status") {
       const services = await Promise.all([

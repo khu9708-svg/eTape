@@ -509,3 +509,5 @@ Checks: `node --test scripts/kayjay.test.mjs`, UI lint/build/full tests, and
 `node scripts/kayjay-smoke.mjs` against the running app. The smoke check exercises
 BTC/ETH/SOL selection, real image loading, chart visibility and desktop sizes.
 Screenshots and local build/runtime data stay in ignored `dist/`.
+
+The Accounts tab reads all Robinhood portfolios through the existing gateway's get_accounts/get_portfolio tools. Only masked labels and selected value fields are returned. No order tool is exposed. Missing portfolio or P&L values remain unavailable.

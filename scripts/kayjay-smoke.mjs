@@ -20,6 +20,11 @@ try {
  assert.equal(await page.locator(".kayjay-coin img").evaluateAll(images=>images.every(i=>i.complete&&i.naturalWidth>0)),true);
  assert.equal(await page.locator(".kayjay-live-chart").isVisible(),true);
  assert.equal(await page.locator(".kayjay-live-chart").evaluate(e=>e.clientWidth>800&&e.clientHeight>200),true);
+ await page.getByRole("button",{name:"Accounts",exact:true}).click();
+ await page.getByText("Robinhood · Real account values · Read only").waitFor();
+ await page.locator(".kayjay-system tbody tr").first().waitFor({timeout:35000});
+ assert.ok(await page.locator(".kayjay-system tbody tr").count()>0);
+ await page.getByRole("button",{name:"Health",exact:true}).click();
  await page.screenshot({path:path.join(root,"dist/kayjay.png"),fullPage:true});
  await page.setViewportSize({width:1366,height:768});
  await page.waitForTimeout(500);

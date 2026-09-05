@@ -47,3 +47,8 @@ test("Coinbase candles map OHLC correctly, deduplicate and sort",()=>{
  assert.deepEqual(candlesForChart([[2,9,12,10,11,5],[1,8,11,9,10,3],[2,9,12,10,11,5],[3,NaN,1,1,1,1]]),[
  {time:1,low:8,high:11,open:9,close:10,volume:3},{time:2,low:9,high:12,open:10,close:11,volume:5}]);
 });
+
+import {portfolioView} from "./kayjay.mjs";
+test("portfolio projection masks accounts and never converts missing balances to zero",()=>{
+ assert.deepEqual(portfolioView({type:"cash",account_number:"12345678"},{total_value:"0",cash:null,crypto_value:"invalid",token:"do-not-return"}),{account:"cash • 5678",total:0,cash:null,crypto:null,currency:"USD"});
+});

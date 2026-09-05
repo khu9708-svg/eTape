@@ -24,11 +24,25 @@ export function KayjayPanel({config}: PanelProps): JSX.Element {
     const timer = setInterval(() => void poll(), 10000);
     return () => { active = false; clearInterval(timer); };
   }, []);
+  const [portfolio,setPortfolio]=useState<{asOf:string;accounts:{account:string;total:number|null;cash:number|null;crypto:number|null;currency:string;error?:string}[]}|null>(null);
+  const [portfolioError,setPortfolioError]=useState(false);
+  useEffect(()=>{
+    if(tab!=="Accounts")return;
+    let active=true;
+    const poll=async()=>{try{
+      const response=await fetch("/kayjay/portfolio",{signal:AbortSignal.timeout(35000)});
+      if(!response.ok)throw new Error("Unavailable");
+      const data=await response.json();
+      if(active){setPortfolio(data);setPortfolioError(false);}
+    }catch{if(active)setPortfolioError(true);}};
+    void poll();const timer=setInterval(()=>void poll(),30000);
+    return()=>{active=false;clearInterval(timer);};
+  },[tab]);
   const atlas = snapshot?.services.find(s => s.name === "ATLAS");
   const jinx = snapshot?.services.find(s => s.name === "JINX");
   return <div className="kayjay-system" style={{height:"100%",overflow:"auto",padding:12,color:palette.text,fontSize:12}}>
     <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
-      {["Health","JINX","ATLAS","RAPTOR15","Positions","Orders"].map(name =>
+      {["Health","Accounts","JINX","ATLAS","RAPTOR15","Positions","Orders"].map(name =>
         <button key={name} onClick={() => setTab(name)} aria-pressed={tab===name}>{name}</button>)}
     </div>
     {tab!=="Health" && <p style={{color:palette.textMuted}}>Engine authority · OFF / MANUAL / AUTO</p>}
@@ -48,6 +62,14 @@ export function KayjayPanel({config}: PanelProps): JSX.Element {
 
       <details><summary>Broker readiness</summary><pre style={{whiteSpace:"pre-wrap"}}>{JSON.stringify(snapshot.services.find(s=>s.name==="Brokers")?.data ?? {state:"ATLAS offline; broker readiness unknown"},null,2)}</pre></details>
       <p style={{color:palette.textMuted}}>Received {new Date(snapshot.updatedAt).toLocaleTimeString()}</p>
+    </>}
+    {tab==="Accounts" && <>
+      <p>Robinhood · Real account values · Read only</p>
+      {portfolioError && <p role="alert">Portfolio unavailable; retained values are stale.</p>}
+      {!portfolio&&!portfolioError && <p>Reading the existing Robinhood gateway...</p>}
+      {portfolio && <><table style={{width:"100%"}}><thead><tr><th>Account</th><th>Total value</th><th>Cash</th><th>Crypto</th></tr></thead>
+       <tbody>{portfolio.accounts.map(a=><tr key={a.account}><td>{a.account}</td>{[a.total,a.cash,a.crypto].map((v,i)=><td key={i}>{v===null?"Unavailable":v.toLocaleString("en-US",{style:"currency",currency:a.currency})}</td>)}</tr>)}</tbody></table>
+       <p>Received {new Date(portfolio.asOf).toLocaleTimeString()}. P&amp;L unavailable from this gateway response.</p></>}
     </>}
     {tab==="ATLAS" && <>
       {atlas?.state==="CONNECTED" && !error
