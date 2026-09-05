@@ -1,3 +1,4 @@
+import {marketSnapshot} from "./kayjay-market.mjs";
 import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -15,7 +16,7 @@ let raptorBusy = false;
 export function allowCommand(message, demo) {
   if (message.kind !== "command") return ["subscribe", "unsubscribe", "ping", "query"].includes(message.kind);
   if (["ReturnToLive", "StartLive", "StopDemo", "StartReplay", "StopReplay"].includes(message.name)) return false;
-  if (["SetConfig", "GetConfig", "FocusGroup", "EnsureSymbol", "ReleaseSymbol", "StartDemo"].includes(message.name)) return true;
+  if (["SetConfig", "GetConfig", "SetAccountDemand", "FocusGroup", "EnsureSymbol", "ReleaseSymbol", "StartDemo"].includes(message.name)) return true;
   return demo && ["SubmitOrder", "CancelOrder", "ReplaceOrder", "Flatten", "Arm", "Disarm", "KillSwitch"].includes(message.name);
 }
 export function redact(value) {
@@ -62,6 +63,11 @@ export function createCockpitServer() {
     if (req.method !== "GET") { res.writeHead(405); return res.end(); }
     const url = new URL(req.url, origin);
     res.setHeader("Cache-Control", "no-store");
+    if (url.pathname === "/kayjay/markets") {
+      res.setHeader("Content-Type","application/json");
+      try { return res.end(JSON.stringify(await marketSnapshot(url.searchParams.get("symbol") || "BTC",Number(url.searchParams.get("seconds") || 60)))); }
+      catch { res.writeHead(502); return res.end(JSON.stringify({error:"Market source unavailable"})); }
+    }
     if (url.pathname === "/kayjay/status") {
       const services = await Promise.all([
         probe("Bluelights", "http://127.0.0.1:8787/health", true),
@@ -128,6 +134,7 @@ export function createCockpitServer() {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   createCockpitServer().listen(port,"127.0.0.1", () => {
     console.log(`KAYJAY listening at ${origin}`);
+    void fetch("http://127.0.0.1:8765/connect", { method: "POST", signal: AbortSignal.timeout(90000) }).catch(() => {});
     void readRaptor();
     setInterval(() => void readRaptor(), 60000).unref();
   });

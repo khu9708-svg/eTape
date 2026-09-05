@@ -252,3 +252,65 @@ input.numfield { -moz-appearance: textfield; appearance: textfield; }
   width: 8px;
   height: 8px;
 }
+
+/* KAYJAY workstation skin: applied only to the owner workspace. */
+html[data-workstation="kayjay"] { color-scheme: dark; }
+html[data-workstation="kayjay"] body {font-family:"Bahnschrift","IBM Plex Sans",sans-serif;font-size:15px;background:#030a10;}
+html[data-workstation="kayjay"] .serif,
+html[data-workstation="kayjay"] .ledger-title,
+html[data-workstation="kayjay"] .ledger-header {font-family:"Bahnschrift","IBM Plex Sans",sans-serif;}
+html[data-workstation="kayjay"] .top-bar {grid-template-columns:minmax(0,1fr) auto!important;min-height:86px;padding:10px 20px!important;gap:24px!important;background:#040d14!important;}
+html[data-workstation="kayjay"] .top-bar-target,
+html[data-workstation="kayjay"] .top-bar-workspace {display:none!important;}
+.kayjay-brand{display:flex;align-items:center;gap:24px;flex-shrink:0;}
+.kayjay-brand-logo{font-family:"Bahnschrift","Arial Black",sans-serif;font-size:48px;font-weight:800;letter-spacing:-2px;line-height:1;color:#f2f8ff;}
+.kayjay-brand-logo::first-letter{color:#54e3f3;}
+.kayjay-brand-copy{display:flex;flex-direction:column;gap:8px;font-size:12px;letter-spacing:3px;font-weight:500;}
+.kayjay-brand-copy small{font-size:10px;letter-spacing:2px;color:#9eb3c6;}
+html[data-workstation="kayjay"] .top-bar-actions{gap:8px!important;}
+html[data-workstation="kayjay"] .top-bar-latency{margin-left:16px;}
+html[data-workstation="kayjay"] .btn{font-size:13px;padding:9px 12px;border-radius:4px;min-height:36px;}
+html[data-workstation="kayjay"] .ledger-header{font-size:16px;padding:8px 12px;border-bottom:1px solid var(--border-strong);}
+html[data-workstation="kayjay"] .ledger-title::before{content:"";display:inline-block;width:3px;height:16px;background:var(--accent);margin-right:9px;vertical-align:-2px;border-radius:2px;}
+html[data-workstation="kayjay"] .dv-tabs-and-actions-container{min-height:38px!important;height:38px!important;}
+html[data-workstation="kayjay"] .data-row{font-size:14px;}
+html[data-workstation="kayjay"] .col-head{font-size:12px;}
+html[data-workstation="kayjay"] input,
+html[data-workstation="kayjay"] select{font-size:15px!important;min-height:32px;box-sizing:border-box;background:#07121d;color:var(--text);}
+html[data-workstation="kayjay"] .dockview-theme-dark{--dv-activegroup-visiblepanel-tab-background-color:#081622;--dv-inactivegroup-visiblepanel-tab-background-color:#07121a;--dv-tabs-and-actions-container-background-color:#050e16;--dv-separator-border:#213a4c;--dv-tab-divider-color:#213a4c;}
+html[data-workstation="kayjay"] [data-testid="demo-banner"]{font-size:12px;letter-spacing:1px;padding:5px 12px!important;background:#092032!important;color:#9fc5de!important;}
+.kayjay-markets{height:100%;display:flex;flex-direction:column;min-height:0;background:var(--bg);color:var(--text);}
+.kayjay-coins{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:12px;border-bottom:1px solid var(--border);}
+.kayjay-coin{display:flex;align-items:center;gap:12px;min-width:0;background:#07131d;border:1px solid #203749;border-radius:5px;padding:12px;text-align:left;color:#eef7ff;cursor:pointer;}
+.kayjay-coin[aria-pressed="true"]{border-color:#38d9ee;background:#092030;}
+.kayjay-coin:hover{background:#0d2535;}
+.kayjay-coin img{width:48px;height:48px;object-fit:contain;flex:none;}
+.kayjay-coin span{display:flex;flex-direction:column;gap:4px;}
+.kayjay-coin strong{font-size:16px;letter-spacing:.6px;}
+.kayjay-coin small{font-size:12px;color:#8da6ba;font-weight:400;}
+.kayjay-coin b{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums;}
+.kayjay-coin em{font-size:13px;font-style:normal;margin-left:auto;font-variant-numeric:tabular-nums;}
+.positive{color:#00dc9b!important;}.negative{color:#ff526b!important;}
+.kayjay-market-toolbar{display:flex;align-items:center;gap:18px;padding:10px 16px;border-bottom:1px solid var(--border);font-size:14px;min-height:32px;}
+.kayjay-market-toolbar>span{margin-left:auto;font-size:11px;letter-spacing:1px;}
+.kayjay-market-toolbar button,.kayjay-system button{border:1px solid #243c4e;border-radius:3px;padding:7px 12px;background:#07121c;color:#bccdda;cursor:pointer;font:inherit;}
+.kayjay-market-toolbar button[aria-pressed="true"],.kayjay-system button[aria-pressed="true"]{background:#0067c8;color:white;border-color:#248fe0;}
+.kayjay-live-chart{flex:1;min-height:150px;position:relative;}
+.kayjay-feed-caption{padding:5px 12px;font-size:11px;color:#879eaf;border-top:1px solid var(--border);}
+.kayjay-book{flex:1;overflow:auto;padding:0 12px;}
+.kayjay-book-price{font-size:25px;font-weight:600;padding:10px 0;color:var(--text);font-variant-numeric:tabular-nums;}
+.kayjay-book table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-family:"IBM Plex Mono",monospace;font-size:13px;}
+.kayjay-book th{font:11px "IBM Plex Sans",sans-serif;color:#8da6ba;text-align:right;padding:5px 4px;}
+.kayjay-book td{text-align:right;padding:6px 4px;border-top:1px solid #112535;}
+.kayjay-book td:nth-child(2){background:rgba(0,220,155,.06);}
+.kayjay-book td:nth-child(3){background:rgba(255,82,107,.06);}
+.kayjay-system{padding:16px 20px!important;font-size:15px!important;}
+.kayjay-system table th{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#819aaf;font-weight:500;}
+.kayjay-system table td{padding:10px 4px!important;border-bottom:1px solid #142a3b;}
+.kayjay-system table td:first-child{font-size:18px;font-weight:600;}
+.kayjay-system table td:nth-child(2){font:12px "IBM Plex Mono",monospace;text-align:center;}
+.kayjay-system table td:last-child{text-align:right;font-size:13px;color:#9db3c5;}
+.kayjay-system pre{font:13px/1.7 "IBM Plex Mono",monospace;}
+.kayjay-system p{line-height:1.5;}
+@media(max-width:1500px){.kayjay-brand-logo{font-size:38px}.kayjay-brand-copy{display:none}.kayjay-coin{gap:8px;padding:8px}.kayjay-coin b{font-size:18px}.kayjay-coin img{width:40px;height:40px}.kayjay-coin em{font-size:11px}html[data-workstation="kayjay"] .top-bar-latency{display:none}}
+@media(max-width:1000px){html[data-workstation="kayjay"] .top-bar{min-height:76px}.kayjay-coin em{display:none}.kayjay-market-toolbar{gap:6px}.kayjay-brand-logo{font-size:30px}.top-bar-actions button{font-size:11px!important}}

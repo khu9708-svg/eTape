@@ -8,12 +8,12 @@ interface ThemeCtx { mode: ThemeMode; palette: Palette; setMode(m: ThemeMode): v
 const Ctx = createContext<ThemeCtx | null>(null);
 
 export function ThemeProvider({ commands, children }: { commands?: Commands; children: ReactNode }): JSX.Element {
-  const [mode, setModeState] = useState<ThemeMode>("light"); // light is the app default
+  const [mode, setModeState] = useState<ThemeMode>(() => document.documentElement.dataset.workstation === "kayjay" ? "dark" : "light"); // light is the app default
 
   useEffect(() => {
     if (!commands) return;
     void commands.sendCommand("GetConfig", { key: "theme" }).then((ack) => {
-      if (ack.status === "accepted" && (ack.value === "dark" || ack.value === "light")) setModeState(ack.value);
+      if (ack.status === "accepted" && (ack.value === "dark" || ack.value === "light")) setModeState(document.documentElement.dataset.workstation === "kayjay" ? "dark" : ack.value);
     });
   }, [commands]);
 

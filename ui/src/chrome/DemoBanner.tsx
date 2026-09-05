@@ -11,7 +11,7 @@ export function DemoBanner({ session }: { session: SessionStore }): JSX.Element 
       display: "flex", alignItems: "center", justifyContent: "center", gap: 12,
       padding: "4px 12px", background: palette.demo, color: "#fff", fontWeight: 600,
     }}>
-      <span>DEMO — synthetic market · practice orders only</span>
+      <span>{document.documentElement.dataset.workstation === "kayjay" ? "LIVE CRYPTO DATA · eTape ticket: PRACTICE ONLY · Engine authority unchanged" : "DEMO — synthetic market · practice orders only"}</span>
     </div>
   );
 }

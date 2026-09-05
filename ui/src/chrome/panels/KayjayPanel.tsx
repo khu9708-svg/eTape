@@ -26,26 +26,26 @@ export function KayjayPanel({config}: PanelProps): JSX.Element {
   }, []);
   const atlas = snapshot?.services.find(s => s.name === "ATLAS");
   const jinx = snapshot?.services.find(s => s.name === "JINX");
-  return <div style={{height:"100%",overflow:"auto",padding:12,color:palette.text,fontSize:12}}>
+  return <div className="kayjay-system" style={{height:"100%",overflow:"auto",padding:12,color:palette.text,fontSize:12}}>
     <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
       {["Health","JINX","ATLAS","RAPTOR15","Positions","Orders"].map(name =>
         <button key={name} onClick={() => setTab(name)} aria-pressed={tab===name}>{name}</button>)}
     </div>
-    <p style={{color:palette.textMuted}}>KAYJAY · Existing engine controls · eTape charts and tickets are practice data</p>
+    {tab!=="Health" && <p style={{color:palette.textMuted}}>Engine authority · OFF / MANUAL / AUTO</p>}
     {error && <p role="alert" style={{color:palette.danger}}>Connection lost. Last received data is stale; trading readiness is unknown.</p>}
     {!snapshot && !error && <p>Connecting to the existing services…</p>}
     {snapshot && tab==="Health" && <>
       <table style={{width:"100%",borderCollapse:"collapse"}}>
         <thead><tr><th style={{textAlign:"left"}}>System</th><th>State</th><th>Latency</th></tr></thead>
-        <tbody>{snapshot.services.filter(s=>!["Positions","Orders","Brokers"].includes(s.name)).map(s =>
+        <tbody>{snapshot.services.filter(s=>["Bluelights","JINX","ATLAS"].includes(s.name)).map(s =>
           <tr key={s.name}><td style={{padding:"7px 0"}}>{s.name}</td><td style={{color:error?palette.danger:s.state==="CONNECTED"?palette.ok:palette.warn}}>
             {error ? "STALE" : s.name==="ATLAS" && s.data?.["mode"] ? String(s.data["mode"]) : s.state}
           </td><td>{s.ms===null?"—":`${s.ms} ms`}</td></tr>)}
           <tr><td>RAPTOR15</td><td>{error?"STALE":snapshot.raptor.state}</td><td>Read only</td></tr>
         </tbody>
       </table>
-      <p>Robinhood · Webull · OANDA · Kalshi</p>
-      <p style={{color:palette.textMuted}}>Webull and OANDA use ATLAS readiness and its existing approval flow. Kalshi feeds use RAPTOR15. Robinhood order routing is not connected.</p>
+      <p>{snapshot.services.filter(s=>["Robinhood","Chrome"].includes(s.name)).map(s => <span key={s.name} style={{marginRight:20}}>{s.name}: {error ? "STALE" : s.state}</span>)}</p><p>Webull / OANDA: ATLAS readiness · Kalshi: RAPTOR15 feed</p>
+
       <details><summary>Broker readiness</summary><pre style={{whiteSpace:"pre-wrap"}}>{JSON.stringify(snapshot.services.find(s=>s.name==="Brokers")?.data ?? {state:"ATLAS offline; broker readiness unknown"},null,2)}</pre></details>
       <p style={{color:palette.textMuted}}>Received {new Date(snapshot.updatedAt).toLocaleTimeString()}</p>
     </>}

@@ -38,8 +38,8 @@ if (!(Test-KayPort 8765)) {
 }
 if (!(Test-KayPort 8686)) {
     $exe = Join-Path $kayRepo 'dist\etape.exe'
-    if (!(Test-Path -LiteralPath $exe)) { throw 'The official eTape Windows release is missing from eTape\dist.' }
-    Start-Process -FilePath $exe -ArgumentList '-demo','-no-open' -WorkingDirectory $kayRepo -WindowStyle Hidden
+    if (!(Test-Path -LiteralPath $exe)) { throw 'Build the matching eTape source into eTape\dist\etape.exe first.' }
+    Start-Process -FilePath $exe -ArgumentList '-demo','-no-open','-dist',(Join-Path $kayRepo 'ui\dist') -WorkingDirectory $kayRepo -WindowStyle Hidden
 }
 if (!(Test-KayPort 8687)) {
     $node = (Get-Command node.exe).Source
@@ -49,8 +49,7 @@ $deadline = (Get-Date).AddSeconds(20)
 while (!(Test-KayPort 8687) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300 }
 if (!(Test-KayPort 8687)) { throw 'KAYJAY did not start; inspect eTape\dist\kayjay-error.log.' }
 if (!$NoOpen) {
-    $kayChrome = Join-Path $env:ProgramFiles 'Google\Chrome\Application\chrome.exe'
-    if (Test-Path -LiteralPath $kayChrome) { Start-Process -FilePath $kayChrome -ArgumentList '--app=http://127.0.0.1:8687/?workspace=kayjay' }
-    else { Start-Process 'http://127.0.0.1:8687/?workspace=kayjay' }
+    & node (Join-Path $kayRepo 'scripts\kayjay-open.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'The existing Chrome/CDP workstation could not open.' }
 }
-Write-Output 'KAYJAY is open. eTape is practice-only; existing engine authority is unchanged.'
+Write-Output 'KAYJAY is ready. eTape is practice-only; existing engine authority is unchanged.'

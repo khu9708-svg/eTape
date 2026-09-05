@@ -222,6 +222,11 @@ export function AppShell({ workspaceName, stores, scheduler, workspaceStore, lin
     setSourceWorkspace(null);
     if (workspaceName === MONITORING_WORKSPACE_ID) observeScannerSync(undefined);
     void workspaceStore.load(workspaceName, workspaceName === MONITORING_WORKSPACE_ID ? buildMonitoringWorkspace() : workspaceName === "kayjay" ? buildKayjayWorkspace() : undefined).then((w) => {
+      if (workspaceName === "kayjay" && !w.panels.some(p => p.id === "kayjay-markets" && p.settings["cockpitLayout"] === 2)) {
+        workspaceStore.save({ ...w, name: "kayjay-before-style" });
+        w = buildKayjayWorkspace();
+        workspaceStore.save(w);
+      }
       if (!alive) return;
       // Hydrate LinkGroups' per-group focused symbol BEFORE setWs: panels read
       // linkGroups.symbolFor(group) on their very first mount, and mounting
@@ -571,7 +576,7 @@ export function AppShell({ workspaceName, stores, scheduler, workspaceStore, lin
       // computes grid placement for it — see addPanel's own pendingRef
       // comment for why this composes correctly with the applyWorkspace call
       // just above in the same tick.
-      if (!(wsRef.current?.panels ?? []).some((p) => p.panelId === "watchlist")) addPanel("watchlist");
+      if (workspaceName !== "kayjay" && !(wsRef.current?.panels ?? []).some((p) => p.panelId === "watchlist")) addPanel("watchlist");
       onTransitionApplied?.();
     };
 

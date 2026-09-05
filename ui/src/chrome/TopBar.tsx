@@ -163,7 +163,7 @@ export function TopBar(p: TopBarProps): JSX.Element {
     <div className="top-bar" data-testid="top-bar" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto minmax(0, 1fr)", alignItems: "center", gap: 10,
       padding: "7px 12px", background: palette.surface, borderBottom: `1px solid ${palette.border}` }}>
       <div className="top-bar-left" style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-        <span className="serif" style={{ fontWeight: 600, fontSize: 14 }}>eTape</span>
+        {p.workspaceName === "kayjay" ? <div className="kayjay-brand"><span className="kayjay-brand-logo">KAYJAY</span><span className="kayjay-brand-copy">TRADING WORKSTATION<small>DISCIPLINE · EXECUTION · EDGE</small></span></div> : <span className="serif" style={{ fontWeight: 600, fontSize: 14 }}>eTape</span>}
         {p.workspaceName !== "main" && <span className="top-bar-workspace" style={{ color: palette.textMuted }}>· {p.workspaceName}</span>}
         <span className="top-bar-latency"><LatencyReadout health={p.health} onOpen={p.onOpenConnection} /></span>
         <SessionClock />

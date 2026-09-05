@@ -1,3 +1,4 @@
+import { KayjayMarketsPanel } from "./KayjayMarketsPanel";
 import { KayjayPanel } from "./KayjayPanel";
 import type { FC } from "react";
 import type { AckMsg, TopicName } from "../../wire/contract";
@@ -104,6 +105,7 @@ const stockInfoPanel: PanelDef = {
 // Plan 5 adds the execution surfaces (account-bar / positions / open-orders /
 // order-ticket). Plan 6 owns Playwright smoke E2E + ui/dist static serving.
 export const PANELS: Record<string, PanelDef> = {
+  "kayjay-markets": {component:KayjayMarketsPanel,topics:[],title:"Live Crypto",glyph:"K",description:"BTC, ETH and SOL · Coinbase live market data",symbolBearing:false},
   "kayjay": { component: KayjayPanel, topics: [], title: "KAYJAY", glyph: "K", description: "Existing engines, broker readiness and execution surfaces", symbolBearing: false },
   "connection-status": {
     component: ({ stores }) => <ConnectionStatusPanel health={stores.health} />,

@@ -469,35 +469,43 @@ specifications in `docs/specs/`.
 
 ## KAYJAY workstation integration (Windows)
 
-From the approved parent folder, run `.\KAYJAY.ps1`. The tracked launcher is
-`eTape/KAYJAY.ps1`; copy it to the parent folder after updating this clone.
-Use `-Check` to report listeners and `-NoOpen` to start without opening a window.
+Run `.\\KAYJAY.ps1` from the approved parent folder. The tracked launcher is
+`eTape/KAYJAY.ps1`; copy it to the parent after updates. Use `-Check` for
+listeners or `-NoOpen` to attach without opening Chrome.
 
-The official v0.8.0 Windows release in ignored `dist/etape.exe` runs in demo mode
-on 8686. Build this source UI with `cd ui; npm ci; npm run build`.
-The thin adapter `scripts/kayjay.mjs` serves that UI on loopback 8687 and relays
-its WebSocket to eTape. The KAYJAY workspace reuses the upstream Trading layout,
-replacing one chart pane with the KAYJAY service panel.
+Build the matching engine source with Go 1.26.5:
+`cd engine; go build -o ../dist/etape.exe ./cmd/etape`.
+Build the UI with `cd ui; npm ci; npm run build`.
+The launcher starts eTape in practice mode on 8686 and the loopback adapter
+`scripts/kayjay.mjs` on 8687. The owner workspace uses eTape's existing docking,
+chart library, practice ticket and account panels with a dark fullscreen skin.
+The engine executable must match this source; the older v0.8.0 release does not
+implement the current account-demand messages.
 
-The adapter reads Bluelights health (8787), JINX worker status (8794), ATLAS mode,
-broker readiness, positions and orders (8080), Chrome/CDP health (9222), and the
-existing Robinhood gateway (8765). The ATLAS tab embeds its existing UI directly:
-preview, approval, fingerprint validation and OFF/MANUAL/AUTO stay in ATLAS.
-The existing RAPTOR15 `python -m raptor15.cli live BTC ETH` reader runs once per
-minute without an order path. Unavailable sources are reported as unavailable,
-never as zero positions or zero P&L.
+The read-only crypto panel uses Coinbase Exchange public BTC/ETH/SOL USD quotes,
+candles and order books. Quotes/book refresh every five seconds; candles cache
+for sixty seconds. Failures mark retained data stale. These public quotes do
+not feed the synthetic practice ticket. Real accounts, positions and P&L must
+come from the existing engines; the sim-paper account is explicitly practice.
 
-The launcher imports the existing Bluelights credential loader, starts its
-existing launcher if needed, and starts the existing Robinhood gateway. Disabled
-JINX/ATLAS tasks remain disabled. No engine source files are changed.
-Robinhood login and execution wiring remain incomplete; a listening gateway
-does not imply an authenticated brokerage connection.
+Coin artwork comes from the MIT-licensed
+[ErikThiart/cryptocurrency-icons](https://github.com/ErikThiart/cryptocurrency-icons);
+the license is retained in `ui/public/coin-icons-LICENSE.txt`.
 
-eTape execution is practice-only here. Live/unknown sessions, mode-switching
-commands and unrecognized mutations are denied at the adapter. Real execution
-belongs to the embedded existing ATLAS UI and its gates; JINX execution and
-Robinhood execution are not connected by this change.
+The adapter reads Bluelights (8787), JINX (8794), ATLAS mode/readiness/positions/
+orders (8080), Chrome/CDP (9222), and the Robinhood gateway (8765). RAPTOR15's
+existing `python -m raptor15.cli live BTC ETH` reader runs once per minute.
+The ATLAS tab embeds its existing UI when available, retaining its approval
+and OFF/MANUAL/AUTO authority. Offline sources show unavailable, never fabricated
+balances. The launcher leaves disabled JINX/ATLAS tasks disabled.
 
-Checks: `node --test scripts/kayjay.test.mjs`, UI lint/typecheck/build/tests,
-and `node scripts/kayjay-smoke.mjs` against the running workstation (installed
-Chrome required). The smoke test writes an ignored screenshot to `dist/kayjay.png`.
+Robinhood connects through its existing gateway and cached authentication;
+gateway connectivity is distinct from working order routing. Live execution,
+including JINX and Robinhood order wiring, remains incomplete. The eTape adapter
+denies live/unknown-session execution, mode-switching and unknown mutations.
+No engine source files are changed.
+
+Checks: `node --test scripts/kayjay.test.mjs`, UI lint/build/full tests, and
+`node scripts/kayjay-smoke.mjs` against the running app. The smoke check exercises
+BTC/ETH/SOL selection, real image loading, chart visibility and desktop sizes.
+Screenshots and local build/runtime data stay in ignored `dist/`.
