@@ -28,6 +28,55 @@ type PaymentResult = {
   order?:{orderId?:string;status?:string;paymentTotal?:string;paymentCurrency?:string;purchaseAmount?:string;purchaseCurrency?:string;fees?:{amount?:string;currency?:string}[]};
 };
 
+type TradeResult = {error?:string;code?:string;mode?:string;state?:string;clientOrderId?:string;coinbaseOrderId?:string|null;rejectReason?:string|null;note?:string;duplicate?:boolean;filledSize?:string|null};
+
+// Coinbase Advanced Trade, gated by the KAYJAY Coinbase execution mode.
+// A live order is OWNER LIVE VERIFY REQUIRED — placed only on explicit confirm.
+function CoinbaseTrading(): JSX.Element {
+  const [mode,setMode]=useState<string>("");
+  const [product,setProduct]=useState("BTC-USD");
+  const [side,setSide]=useState("BUY");
+  const [quoteSize,setQuoteSize]=useState("");
+  const [confirmed,setConfirmed]=useState(false);
+  const [result,setResult]=useState<TradeResult|null>(null);
+  const [busy,setBusy]=useState(false);
+  const [msg,setMsg]=useState("");
+  async function trade(body:Record<string,unknown>):Promise<TradeResult|null> {
+    if(busy)return null; setBusy(true); setMsg("");
+    try {
+      const r=await fetch("/kayjay/trade",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
+      const data=await r.json() as TradeResult;
+      if(!r.ok||data.error){setMsg(data.error??"Trade request rejected.");return data;}
+      return data;
+    } catch { setMsg("Coinbase trade endpoint unavailable. Verify order state in Coinbase before retrying."); return null; }
+    finally { setBusy(false); }
+  }
+  useEffect(()=>{fetch("/kayjay/trade",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"mode"})}).then(r=>r.json()).then((d:TradeResult)=>{if(d?.mode)setMode(d.mode);}).catch(()=>setMode("OFF"));},[]);
+  async function setExecMode(next:string){const d=await trade({action:"mode",owner:true,confirm:true,input:{mode:next}});if(d?.mode)setMode(d.mode);}
+  async function submit(){
+    const clientOrderId="kj-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,8);
+    const d=await trade({action:"submit",owner:true,confirm:true,input:{clientOrderId,productId:product,side,type:"MARKET",quoteSize}});
+    setResult(d);setConfirmed(false);
+    if(d?.state==="submitted")setMsg("Order reached Coinbase. It is not a fill — reconcile for status.");
+  }
+  return <details><summary>Coinbase trading · mode {mode||"…"}</summary>
+    <p>Face → KAYJAY Coinbase execution authority → Coinbase. OFF blocks all orders. A live order is placed only on explicit owner confirmation (OWNER LIVE VERIFY REQUIRED).</p>
+    <fieldset disabled={busy} style={{border:0,padding:0}}>
+      <p>Mode: {["OFF","MANUAL","AUTO"].map(m=><button key={m} disabled={m===mode} style={{marginRight:4}} onClick={()=>void setExecMode(m)}>{m}</button>)}</p>
+      {mode!=="OFF"&&<>
+        <label style={{display:"block",margin:"6px 0"}}>Product <input value={product} onChange={e=>{setProduct(e.target.value.trim().toUpperCase());setConfirmed(false);}}/></label>
+        <label style={{display:"block",margin:"6px 0"}}>Side <select value={side} onChange={e=>{setSide(e.target.value);setConfirmed(false);}}><option>BUY</option><option>SELL</option></select></label>
+        <label style={{display:"block",margin:"6px 0"}}>{side==="BUY"?"Quote size (USD)":"Base size"} <input inputMode="decimal" value={quoteSize} onChange={e=>{setQuoteSize(e.target.value);setConfirmed(false);}}/></label>
+        <label style={{display:"block",margin:"6px 0"}}><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/> I confirm this live Coinbase order.</label>
+        <button disabled={!quoteSize||!confirmed} onClick={()=>void submit()}>Place live order</button>
+      </>}
+      {result?.clientOrderId&&<button style={{marginLeft:8}} onClick={()=>void trade({action:"reconcile",input:{clientOrderId:result.clientOrderId}}).then(d=>setResult(d))}>Reconcile</button>}
+    </fieldset>
+    {result&&<p>Order {result.clientOrderId}: {result.state}{result.coinbaseOrderId?` · ${result.coinbaseOrderId}`:""}{result.rejectReason?` · ${result.rejectReason}`:""}{result.filledSize?` · filled ${result.filledSize}`:""}</p>}
+    {msg&&<p role="alert">{msg}</p>}
+  </details>;
+}
+
 type CashoutRail = {rail?:string;label?:string;candidate?:boolean;reason?:string;paymentMethodId?:string|null;methodType?:string;requiresSession?:boolean};
 type CashoutState = {error?:string;authenticated?:boolean;country?:string|null;rails?:Record<string,CashoutRail>;selection?:{selected?:string|null;rail?:CashoutRail;error?:string;code?:string}|null};
 
@@ -248,6 +297,7 @@ export function KayjayPanel({config}: PanelProps): JSX.Element {
     {tab==="Accounts" && <>
       <SandboxPayments/>
       <CashoutRails/>
+      <CoinbaseTrading/>
       <details><summary>Coinbase account · {coinbaseError?"STALE / UNAVAILABLE":coinbaseAccount?.state??"Checking"}</summary>
         <p>Read only · Refreshes every 30 seconds while Accounts is open.</p>
         {coinbaseError&&<p role="alert">Coinbase refresh failed. Retained data is stale; account readiness is unknown.</p>}

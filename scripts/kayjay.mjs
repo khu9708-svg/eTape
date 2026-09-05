@@ -1,6 +1,8 @@
 import {coinbaseSnapshot,coinbaseCurrent,coinbaseJwt,coinbaseCredentials} from "./kayjay-coinbase.mjs";
 import {createPaymentAdapter,createFileIntentStore,PaymentError} from "./kayjay-payments.mjs";
 import {discoverCashoutRails,selectCashoutRail,CashoutError} from "./kayjay-cashout.mjs";
+import {createCoinbaseTrader,TradeError} from "./kayjay-coinbase-trade.mjs";
+import {readFileSync,writeFileSync} from "node:fs";
 import {homedir} from "node:os";
 import {createControlIntentStore,createControlForwarder,coordinateExitAll,controlCapabilities} from "./kayjay-control.mjs";
 import {connectionState,sourceData,requireLiveAccount} from "./kayjay-state.mjs";
@@ -29,6 +31,35 @@ export async function controlAction(request,forwarder=controls){
   case "atlas_stop":return forwarder.tightenStopAtlas(request);
   case "exit_all":return coordinateExitAll(request,{store:controlStore});
   default:throw new Error("Unsupported control action");
+ }
+}
+// KAYJAY-level Coinbase execution mode. OFF by default, never AUTO on restart.
+const coinbaseModeFile=path.join(homedir(),".eTape","coinbase-mode.json");
+export function coinbaseMode(){
+ try{const m=JSON.parse(readFileSync(coinbaseModeFile,"utf8"))?.mode;return ["OFF","MANUAL","AUTO"].includes(m)?m:"OFF";}catch{return "OFF";}
+}
+function setCoinbaseMode(mode){
+ if(!["OFF","MANUAL","AUTO"].includes(mode))throw new TradeError("invalid_mode","mode must be OFF, MANUAL or AUTO.");
+ writeFileSync(coinbaseModeFile,JSON.stringify({mode,updatedAt:new Date().toISOString()}),{mode:0o600});
+ return mode;
+}
+let trader;
+function coinbaseTrader(){
+ return trader??=createCoinbaseTrader({store:createFileIntentStore(path.join(homedir(),".eTape","coinbase-trade-intents.json"))});
+}
+export async function tradeAction(request,t=coinbaseTrader()){
+ const {action,input={}}=request;
+ switch(action){
+  case "mode":
+   if(input.mode===undefined)return {mode:coinbaseMode()};
+   if(request.owner!==true||request.confirm!==true)throw new TradeError("owner_confirmation_required","Owner confirmation is required to change the Coinbase execution mode.",403);
+   return {mode:setCoinbaseMode(input.mode)};
+  case "submit":
+   return t.submit(input,{mode:coinbaseMode(),owner:request.owner,confirm:request.confirm});
+  case "cancel":return t.cancel(input.coinbaseOrderId);
+  case "order_status":return t.getOrder(input.coinbaseOrderId);
+  case "reconcile":return t.reconcile(input.clientOrderId);
+  default:throw new TradeError("unsupported_action","Unsupported trade action.");
  }
 }
 function paymentAdapter(){
@@ -161,6 +192,13 @@ export function createCockpitServer() {
       try{let body="";for await(const chunk of req){body+=chunk;if(Buffer.byteLength(body)>8192)throw new PaymentError("request_too_large","Payment request too large.",413);}
         return res.end(JSON.stringify(await paymentAction(JSON.parse(body))));
       }catch(error){res.writeHead(error instanceof PaymentError?error.status:400);return res.end(JSON.stringify({error:error instanceof PaymentError?error.message:"Payment request failed.",code:error instanceof PaymentError?error.code:"invalid_request"}));}
+    }
+    if(req.method==="POST"&&req.url==="/kayjay/trade"){
+      res.setHeader("Cache-Control","no-store");res.setHeader("Content-Type","application/json");
+      if(req.headers.origin!==origin||!req.headers["content-type"]?.startsWith("application/json")){res.writeHead(403);return res.end();}
+      try{let body="";for await(const chunk of req){body+=chunk;if(Buffer.byteLength(body)>4096)throw new TradeError("request_too_large","Trade request too large.",413);}
+        return res.end(JSON.stringify(await tradeAction(JSON.parse(body))));
+      }catch(error){res.writeHead(error instanceof TradeError?error.status:400);return res.end(JSON.stringify({error:error instanceof TradeError?error.message:"Trade request failed.",code:error instanceof TradeError?error.code:"invalid_request"}));}
     }
     if(req.method==="POST"&&req.url==="/kayjay/control"){
       res.setHeader("Cache-Control","no-store");res.setHeader("Content-Type","application/json");
