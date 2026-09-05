@@ -15,8 +15,8 @@ try{
  assert.equal(await page.locator(".kayjay-live-chart").isVisible(),true);
  await page.getByRole("navigation").getByRole("button",{name:"Meme Coins",exact:true}).click();
  await page.locator(".kayjay-token-results tbody tr").first().waitFor({timeout:30000});
- await page.getByRole("textbox",{name:"Token name, symbol or contract"}).fill("BONK");await page.getByRole("button",{name:"Search tokens"}).click();
- await page.waitForResponse(r=>r.url().includes("/kayjay/discovery?feed=search")&&r.status()===200);
+ await page.getByRole("textbox",{name:"Token name, symbol or contract"}).fill("BONK");
+ await Promise.all([page.waitForResponse(r=>r.url().includes("/kayjay/discovery?feed=search")&&r.status()===200),page.getByRole("button",{name:"Search tokens"}).click()]);
  await page.locator(".kayjay-token-results tbody tr button").first().click();
  await page.getByLabel("Selected token chart").waitFor(); await page.getByText(/Live 15m candles/).waitFor({timeout:20000});
  await page.waitForTimeout(5000);await page.screenshot({path:path.join(root,"dist/kayjay-discovery.png"),fullPage:true});

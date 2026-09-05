@@ -109,6 +109,24 @@ test("Coinbase Ed25519 credentials produce a independently verified signature",(
 });
 
 import {requireLiveAccount} from "./kayjay-state.mjs";
+import {collectCoinbase,readCoinbaseSnapshot} from "./kayjay-coinbase.mjs";
+const testCoinbaseKey=()=>({name:"test",secret:generateKeyPairSync("ed25519").privateKey.export({format:"der",type:"pkcs8"}).subarray(-32).toString("base64")});
+test("Coinbase follows account pagination and reports a broken continuation incomplete",async()=>{
+ let calls=0;const send=async url=>({ok:true,json:async()=>++calls===1?{accounts:[{currency:"USD"}],has_next:true,cursor:"next"}:{accounts:[{currency:"BTC"}],has_next:false}});
+ const result=await collectCoinbase('/accounts?limit=250','accounts',testCoinbaseKey(),send);
+ assert.equal(calls,2);assert.equal(result.rows.length,2);assert.equal(result.complete,true);
+ const broken=await collectCoinbase('/accounts?limit=250','accounts',testCoinbaseKey(),async()=>({ok:true,json:async()=>({accounts:[],has_next:true})}));
+ assert.equal(broken.complete,false);
+});
+test("Coinbase partial history outage retains balances but degrades completeness",async()=>{
+ const snapshot=await readCoinbaseSnapshot(testCoinbaseKey(),async url=>url.includes('/fills')?{ok:false,status:503}:{ok:true,json:async()=>url.includes('/accounts')?{accounts:[{currency:'USD',available_balance:{value:'0'},ready:true}],has_next:false}:{orders:[],has_next:false}});
+ assert.equal(snapshot.state,'DEGRADED');assert.equal(snapshot.authenticated,true);assert.equal(snapshot.complete,false);
+ assert.equal(snapshot.accounts[0].available,'0');assert.equal(snapshot.accounts[0].held,null);assert.equal(snapshot.fills,null);assert.deepEqual(snapshot.history,[]);
+});
+test("Coinbase empty successful lists are complete without inventing account readiness",async()=>{
+ const snapshot=await readCoinbaseSnapshot(testCoinbaseKey(),async()=>({ok:true,json:async()=>({accounts:[],orders:[],fills:[],has_next:false})}));
+ assert.equal(snapshot.state,'CONNECTED');assert.equal(snapshot.complete,true);assert.equal(snapshot.ready,false);
+});
 test("ATLAS simulated account fallback is excluded without live broker registration",()=>{
  assert.equal(requireLiveAccount({state:"CONNECTED",data:{positions:[]}},false).data,null);
  assert.equal(requireLiveAccount({state:"CONNECTED",data:{positions:[]}},true).state,"CONNECTED");

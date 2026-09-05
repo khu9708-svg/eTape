@@ -37,24 +37,34 @@ export async function readCoinbase(resource,credentials=coinbaseCredentials(),se
 let cached;
 let current={state:"UNVERIFIED",authenticated:null,ready:false,reason:"Coinbase account check has not completed"};
 export function coinbaseCurrent(){return current;}
+export async function collectCoinbase(resource,field,credentials,send=fetch){
+ const rows=[],seen=new Set();let cursor="";
+ for(let page=0;page<5;page++){
+  const data=await readCoinbase(resource+(cursor?"&cursor="+encodeURIComponent(cursor):""),credentials,send);
+  if(!Array.isArray(data[field]))throw new Error("Coinbase account schema unavailable");
+  rows.push(...data[field]);
+  const more=data.has_next===true||(field==="fills"&&data.has_next===undefined&&Boolean(data.cursor)&&data[field].length>0);
+  if(!more)return {rows,complete:true};
+  if(!data.cursor||seen.has(data.cursor))return {rows,complete:false};
+  cursor=data.cursor;seen.add(cursor);
+ }
+ return {rows,complete:false};
+}
+export async function readCoinbaseSnapshot(credentials,send=fetch){
+ const started=Date.now();
+ const specs=[['accounts','/accounts?limit=250','accounts'],['orders','/orders/historical/batch?limit=100&order_status=OPEN','orders'],['fills','/orders/historical/fills?limit=100','fills'],['history','/orders/historical/batch?limit=100&order_status=FILLED','orders']];
+ const results=await Promise.allSettled(specs.map(([,resource,field])=>collectCoinbase(resource,field,credentials,send)));
+ const out={asOf:new Date().toISOString(),latencyMs:Date.now()-started};
+ const order=o=>({id:o.order_id,symbol:o.product_id,side:o.side,status:o.status,filled_size:o.filled_size,average_filled_price:o.average_filled_price});
+ const projections={accounts:a=>({currency:a.currency,available:a.available_balance?.value??null,held:a.hold?.value??null,active:a.active===true,ready:a.ready===true}),orders:order,history:order,fills:f=>({id:f.entry_id,symbol:f.product_id,side:f.side,size:f.size,price:f.price,time:f.trade_time})};
+ results.forEach((result,i)=>{const name=specs[i][0];out[name]=result.status==='fulfilled'?result.value.rows.map(projections[name]):null;out[name+'Complete']=result.status==='fulfilled'&&result.value.complete;});
+ const any=results.some(r=>r.status==='fulfilled');
+ const complete=specs.every(([name])=>out[name+'Complete']);
+ return {...out,state:complete?'CONNECTED':any?'DEGRADED':'UNAVAILABLE',authenticated:any?true:null,ready:out.accounts?.some(a=>a.ready)??false,complete,reason:complete?'All account, open-order, fill and filled-order pages reconciled. Trading readiness is separate.':'One or more account/history reads failed or reached the page limit; missing data is not a zero balance.'};
+}
 export async function coinbaseSnapshot(){
  const credentials=coinbaseCredentials();
  if(!credentials.name||!credentials.secret){current={state:"AUTH REQUIRED",authenticated:false,ready:false,accounts:null,orders:null,fills:null,complete:false,reason:"Coinbase API credentials are UNSET"};return current;}
  if(cached&&Date.now()-cached.time<30000)return cached.promise;
- const promise=(async()=>{
- const started=Date.now();
- try{
-  const accounts=[];let cursor="",more=true;
-  for(let page=0;page<5&&more;page++){
-   const data=await readCoinbase("/accounts?limit=250"+(cursor?"&cursor="+encodeURIComponent(cursor):""),credentials);
-   if(!Array.isArray(data.accounts))throw new Error("Coinbase account schema unavailable");
-   accounts.push(...data.accounts.map(a=>({currency:a.currency,available:a.available_balance?.value??null,held:a.hold?.value??null,active:a.active===true,ready:a.ready===true})));
-   more=data.has_next===true;cursor=data.cursor||"";if(more&&!cursor)break;
-  }
-  const [orders,fills]=await Promise.allSettled([readCoinbase("/orders/historical/batch?limit=100&order_status=OPEN",credentials),readCoinbase("/orders/historical/fills?limit=100",credentials)]);
-  const orderRows=orders.status==="fulfilled"&&Array.isArray(orders.value.orders)?orders.value.orders.map(o=>({id:o.order_id,symbol:o.product_id,side:o.side,status:o.status,filled_size:o.filled_size,average_filled_price:o.average_filled_price})):null;
-  const fillRows=fills.status==="fulfilled"&&Array.isArray(fills.value.fills)?fills.value.fills.map(f=>({id:f.entry_id,symbol:f.product_id,side:f.side,size:f.size,price:f.price,time:f.trade_time})):null;
-  return {state:"CONNECTED",authenticated:true,ready:accounts.some(a=>a.ready),asOf:new Date().toISOString(),latencyMs:Date.now()-started,accounts,accountsComplete:!more,orders:orderRows,fills:fillRows,complete:false,reason:"Account reads only; order/fill history is a bounded page. Trading and money movement require existing authority."};
- }catch{return {state:"UNAVAILABLE",authenticated:null,ready:false,accounts:null,orders:null,fills:null,complete:false,reason:"Coinbase account authentication or request failed"};}
- })().then(value=>{current=value;return value;});cached={time:Date.now(),promise};return promise;
+ const promise=readCoinbaseSnapshot(credentials).then(value=>{current=value;return value;});cached={time:Date.now(),promise};return promise;
 }

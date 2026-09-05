@@ -563,7 +563,11 @@ Coinbase read-only accounts, open-order page and fill page use the documented
 Advanced Trade API with short-lived P-256 or Ed25519 signed JWTs. Environment names are
 COINBASE_API_KEY_NAME / COINBASE_API_PRIVATE_KEY (or CDP_API_KEY_ID /
 CDP_API_KEY_SECRET), loaded from the local eTape credential file described above.
-Never put values in this repository. Orders/fills are explicitly bounded pages.
+Never put values in this repository. Accounts, open orders, fills and filled-order
+history follow cursors up to five pages per read. A missing/repeated continuation,
+page limit or failed resource produces incomplete coverage, not empty balances.
+The existing Accounts panel displays balances and history tables, refreshes every
+30 seconds, and marks retained data stale after a failed refresh.
 The account adapter rejects order-placement paths and does not bypass engines.
 
 Funding, instant debit payouts, shared stop/schedule authority, and reconciled

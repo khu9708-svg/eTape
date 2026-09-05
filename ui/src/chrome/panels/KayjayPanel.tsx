@@ -4,6 +4,24 @@ import type { PanelProps } from "./registry";
 
 type Service = { name: string; state: string; ms: number | null; authenticated?:boolean|null; ready?:boolean|null; lastSuccess?:string|null; data: Record<string, unknown> | null };
 type Snapshot = { updatedAt: string; services: Service[]; raptor: {state: string; text: string; updatedAt: string | null} };
+type CoinbaseOrder = {id?:string;symbol?:string;side?:string;status?:string;filled_size?:string|null;average_filled_price?:string|null};
+type CoinbaseSnapshot = {
+  state:string; authenticated?:boolean; ready?:boolean; asOf?:string; reason?:string;
+  accounts:{currency?:string;available?:string|null;held?:string|null}[]|null;
+  orders:CoinbaseOrder[]|null; history:CoinbaseOrder[]|null;
+  fills:{id?:string;symbol?:string;side?:string;size?:string|null;price?:string|null;time?:string}[]|null;
+  accountsComplete?:boolean;ordersComplete?:boolean;fillsComplete?:boolean;historyComplete?:boolean;complete?:boolean;
+};
+const coinbaseValue = (value: string | null | undefined) => value == null || value === "" ? "Unavailable" : value;
+
+function CoinbaseOrders({label,orders,complete}:{label:string;orders:CoinbaseOrder[]|null|undefined;complete:boolean|undefined}): JSX.Element {
+  return <section><h4>{label}{complete !== true && " · Incomplete"}</h4>
+    {orders == null ? <p>Unavailable</p> : orders.length === 0 ? <p>None returned{complete !== true && "; coverage incomplete"}.</p> :
+      <table style={{width:"100%"}}><thead><tr><th>Market</th><th>Side</th><th>Status</th><th>Filled size</th><th>Average price</th></tr></thead>
+        <tbody>{orders.map((order,index)=><tr key={order.id??index}><td>{coinbaseValue(order.symbol)}</td><td>{coinbaseValue(order.side)}</td><td>{coinbaseValue(order.status)}</td><td>{coinbaseValue(order.filled_size)}</td><td>{coinbaseValue(order.average_filled_price)}</td></tr>)}</tbody>
+      </table>}
+  </section>;
+}
 
 export function KayjayPanel({config}: PanelProps): JSX.Element {
   const {palette} = useTheme();
@@ -25,21 +43,37 @@ export function KayjayPanel({config}: PanelProps): JSX.Element {
     return () => { active = false; clearInterval(timer); };
   }, []);
   const [portfolio,setPortfolio]=useState<{asOf:string;accounts:{account:string;total:number|null;cash:number|null;crypto:number|null;currency:string;error?:string}[]}|null>(null);
-  const [coinbaseAccount,setCoinbaseAccount]=useState<Record<string,unknown>|null>(null);
+  const [coinbaseAccount,setCoinbaseAccount]=useState<CoinbaseSnapshot|null>(null);
+  const [coinbaseError,setCoinbaseError]=useState(false);
   const [portfolioError,setPortfolioError]=useState(false);
   useEffect(()=>{
     if(tab!=="Accounts")return;
     const controller=new AbortController();
-    void fetch("/kayjay/coinbase",{signal:controller.signal}).then(r=>r.json()).then(setCoinbaseAccount).catch(()=>setCoinbaseAccount({state:"UNAVAILABLE"}));
     let active=true;
-    const poll=async()=>{try{
-      const response=await fetch("/kayjay/portfolio",{signal:AbortSignal.timeout(35000)});
+    let coinbaseBusy=false;
+    const pollCoinbase=async()=>{
+      if(coinbaseBusy)return;
+      coinbaseBusy=true;
+      try{
+        const response=await fetch("/kayjay/coinbase",{signal:AbortSignal.any([controller.signal,AbortSignal.timeout(35000)])});
+        if(!response.ok)throw new Error("Unavailable");
+        const data=await response.json() as CoinbaseSnapshot;
+        if(!data||typeof data.state!=="string")throw new Error("Invalid account response");
+        if(active){setCoinbaseAccount(data);setCoinbaseError(false);}
+      }catch{if(active)setCoinbaseError(true);}finally{coinbaseBusy=false;}
+    };
+    let portfolioBusy=false;
+    const poll=async()=>{
+      if(portfolioBusy)return;
+      portfolioBusy=true;
+      try{
+      const response=await fetch("/kayjay/portfolio",{signal:AbortSignal.any([controller.signal,AbortSignal.timeout(35000)])});
       if(!response.ok)throw new Error("Unavailable");
       const data=await response.json();
       if(active){setPortfolio(data);setPortfolioError(false);}
-    }catch{if(active)setPortfolioError(true);}};
-    void poll();const timer=setInterval(()=>void poll(),30000);
-    return()=>{active=false;clearInterval(timer);};
+    }catch{if(active)setPortfolioError(true);}finally{portfolioBusy=false;}};
+    void poll();void pollCoinbase();const timer=setInterval(()=>{void poll();void pollCoinbase();},30000);
+    return()=>{active=false;clearInterval(timer);controller.abort();};
   },[tab]);
   useEffect(()=>{
     const navigate=(event:Event)=>{const name=(event as CustomEvent<string>).detail;setTab(config.settings["view"]==="nav"?name:name==="Dashboard"||name==="Markets"||name==="Meme Coins"?"Health":name==="Brokers"?"Accounts":name);};
@@ -90,7 +124,24 @@ export function KayjayPanel({config}: PanelProps): JSX.Element {
     </>}
     {tab==="Settings" && <p>Use Settings in the top bar for the existing eTape settings. Engine authority is controlled in its own system view.</p>}
     {tab==="Accounts" && <>
-      <details><summary>Coinbase account · {String(coinbaseAccount?.["state"]??"Checking")}</summary><pre style={{whiteSpace:"pre-wrap"}}>{JSON.stringify(coinbaseAccount,null,2)}</pre></details>
+      <details><summary>Coinbase account · {coinbaseError?"STALE / UNAVAILABLE":coinbaseAccount?.state??"Checking"}</summary>
+        <p>Read only · Refreshes every 30 seconds while Accounts is open.</p>
+        {coinbaseError&&<p role="alert">Coinbase refresh failed. Retained data is stale; account readiness is unknown.</p>}
+        {!coinbaseAccount&&!coinbaseError&&<p>Reading Coinbase account data…</p>}
+        {coinbaseAccount&&<>
+          <p>Authentication: {coinbaseAccount.authenticated===true?"Verified":coinbaseAccount.authenticated===false?"Not verified":"Unknown"} · Account readiness: {coinbaseError?"Unknown":coinbaseAccount.ready===true?"Ready":coinbaseAccount.ready===false?"Not ready":"Unknown"} · Coverage: {coinbaseAccount.complete===true?"Complete":"Incomplete"}</p>
+          {coinbaseAccount.reason&&<p>{coinbaseAccount.reason}</p>}
+          <h4>Balances{coinbaseAccount.accountsComplete!==true&&" · Incomplete"}</h4>
+          {coinbaseAccount.accounts==null?<p>Unavailable</p>:coinbaseAccount.accounts.length===0?<p>No accounts returned{coinbaseAccount.accountsComplete!==true&&"; coverage incomplete"}.</p>:
+            <table style={{width:"100%"}}><thead><tr><th>Currency</th><th>Available</th><th>Held</th></tr></thead><tbody>{coinbaseAccount.accounts.map((account,index)=><tr key={index}><td>{coinbaseValue(account.currency)}</td><td>{coinbaseValue(account.available)}</td><td>{coinbaseValue(account.held)}</td></tr>)}</tbody></table>}
+          <CoinbaseOrders label="Open orders" orders={coinbaseAccount.orders} complete={coinbaseAccount.ordersComplete}/>
+          <h4>Fills{coinbaseAccount.fillsComplete!==true&&" · Incomplete"}</h4>
+          {coinbaseAccount.fills==null?<p>Unavailable</p>:coinbaseAccount.fills.length===0?<p>No fills returned{coinbaseAccount.fillsComplete!==true&&"; coverage incomplete"}.</p>:
+            <table style={{width:"100%"}}><thead><tr><th>Market</th><th>Side</th><th>Size</th><th>Price</th><th>Time</th></tr></thead><tbody>{coinbaseAccount.fills.map((fill,index)=><tr key={fill.id??index}><td>{coinbaseValue(fill.symbol)}</td><td>{coinbaseValue(fill.side)}</td><td>{coinbaseValue(fill.size)}</td><td>{coinbaseValue(fill.price)}</td><td>{fill.time?new Date(fill.time).toLocaleString():"Unavailable"}</td></tr>)}</tbody></table>}
+          <CoinbaseOrders label="Trade / order history" orders={coinbaseAccount.history} complete={coinbaseAccount.historyComplete}/>
+          <p>Received {coinbaseAccount.asOf?new Date(coinbaseAccount.asOf).toLocaleString():"time unavailable"}. Balances use each account’s currency; prices use the market’s quote currency.</p>
+        </>}
+      </details>
       <p>Robinhood · Real account values · Read only</p>
       {portfolioError && <p role="alert">Portfolio unavailable; retained values are stale.</p>}
       {!portfolio&&!portfolioError && <p>Reading the existing Robinhood gateway...</p>}
