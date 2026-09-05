@@ -89,7 +89,7 @@ jobs:
         run: npm ci
 
       - name: KAYJAY adapter boundary tests
-        run: node --test scripts/kayjay.test.mjs scripts/kayjay-control.test.mjs scripts/kayjay-payments.test.mjs scripts/kayjay-cashout.test.mjs scripts/kayjay-coinbase-trade.test.mjs scripts/kayjay-risk.test.mjs scripts/kayjay-schedule.test.mjs
+        run: node --test scripts/kayjay.test.mjs scripts/kayjay-control.test.mjs scripts/kayjay-payments.test.mjs scripts/kayjay-cashout.test.mjs scripts/kayjay-coinbase-trade.test.mjs scripts/kayjay-risk.test.mjs scripts/kayjay-schedule.test.mjs scripts/kayjay-exitall-jinx.test.mjs
 
       - name: Lint
         working-directory: ui

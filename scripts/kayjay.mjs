@@ -7,6 +7,7 @@ import {homedir} from "node:os";
 import {createControlIntentStore,createControlForwarder,coordinateExitAll,controlCapabilities,resolveControlPriority} from "./kayjay-control.mjs";
 import {translateForVenue,RiskError} from "./kayjay-risk.mjs";
 import {createFlattenSchedule,ScheduleError} from "./kayjay-schedule.mjs";
+import {createJinxExitAllAuthority} from "./kayjay-exitall-jinx.mjs";
 import {connectionState,sourceData,requireLiveAccount} from "./kayjay-state.mjs";
 import {discover,tokenCandles} from "./kayjay-discovery.mjs";
 import {marketSnapshot} from "./kayjay-market.mjs";
@@ -32,7 +33,14 @@ export async function controlAction(request,forwarder=controls,schedule=flattenS
   case "atlas_exit":return forwarder.exitAtlas(request);
   case "atlas_cancel":return forwarder.cancelAllAtlas(request);
   case "atlas_stop":return forwarder.tightenStopAtlas(request);
-  case "exit_all":return coordinateExitAll(request,{store:controlStore});
+  case "exit_all":{
+   // Build the real authority object per requested venue. A venue with no
+   // implemented authority is simply absent -> coordinator reports it unsupported.
+   const venues=Array.isArray(request.venues)?request.venues:[];
+   const authorities={};
+   if(venues.includes("JINX"))authorities.JINX=await createJinxExitAllAuthority({intentId:request.id});
+   return coordinateExitAll(request,{store:controlStore,authorities});
+  }
   case "priority":return resolveControlPriority(request.input||{});
   case "risk_translate":{
    const venue=String(request.input?.venue||"").toUpperCase();
