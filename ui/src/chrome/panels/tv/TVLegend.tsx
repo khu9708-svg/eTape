@@ -9,7 +9,7 @@ import { formatCompactShares } from "../../format";
 
 export interface TVLegendHandle { update(view: LegendView): void }
 export interface TVLegendProps {
-  chrome: TvChrome; symbol: string; timeframe: string; instances: IndicatorInstance[]; floatShares: number | null; paneOffsets: number[];
+  chrome: TvChrome; symbol: string; timeframe: string; instances: IndicatorInstance[]; floatShares: number | null; borrowStatus: string | null; paneOffsets: number[];
   rightAxisWidth: number;
   onToggleHidden: (id: string) => void; onEditIndicator: (id: string) => void; onRemoveIndicator: (id: string) => void;
   onClosePane: (paneIndex: number) => void; onToggleCollapsePane: (paneIndex: number) => void;
@@ -25,7 +25,15 @@ const fmtVol = (n: number | null): string => {
   return `${n}`;
 };
 
-export function TVLegend({ chrome, symbol, timeframe, instances, floatShares, paneOffsets, rightAxisWidth, onToggleHidden, onEditIndicator, onRemoveIndicator, onClosePane, onToggleCollapsePane, legendRef }: TVLegendProps): JSX.Element {
+const formatBorrowStatus = (value: string | null): string => {
+  switch (value?.trim().toLowerCase()) {
+    case "easy_to_borrow": return "ETB";
+    case "hard_to_borrow": return "HTB";
+    default: return "-";
+  }
+};
+
+export function TVLegend({ chrome, symbol, timeframe, instances, floatShares, borrowStatus, paneOffsets, rightAxisWidth, onToggleHidden, onEditIndicator, onRemoveIndicator, onClosePane, onToggleCollapsePane, legendRef }: TVLegendProps): JSX.Element {
   const cells = useRef(new Map<string, HTMLElement>());
   const [hovered, setHovered] = useState<string | null>(null);
   const bare = symbol.replace(/^US\./, "");
@@ -103,7 +111,7 @@ export function TVLegend({ chrome, symbol, timeframe, instances, floatShares, pa
     <>
       <div style={legendBox(paneOffsets[0] ?? 0)}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600 }}>
-          <span>{bare} · {timeframe} · eTape</span>
+          <span>{bare} · {timeframe} · {formatBorrowStatus(borrowStatus)}</span>
           <span style={{ color: chrome.text }}>O</span>{val("o")}
           <span style={{ color: chrome.text }}>H</span>{val("h")}
           <span style={{ color: chrome.text }}>L</span>{val("l")}

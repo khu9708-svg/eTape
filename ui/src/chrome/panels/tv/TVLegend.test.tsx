@@ -21,16 +21,16 @@ const cssColor = (hex: string): string => {
   return div.style.color;
 };
 
-function Harness({ onToggle, hRef, instances = [ema, volume], floatShares = null, onClosePane = () => {}, onToggleCollapsePane = () => {} }: {
+function Harness({ onToggle, hRef, instances = [ema, volume], floatShares = null, borrowStatus = null, onClosePane = () => {}, onToggleCollapsePane = () => {} }: {
   onToggle: (id: string) => void; hRef: MutableRefObject<TVLegendHandle | null>;
-  instances?: IndicatorInstance[]; floatShares?: number | null;
+  instances?: IndicatorInstance[]; floatShares?: number | null; borrowStatus?: string | null;
   onClosePane?: (paneIndex: number) => void; onToggleCollapsePane?: (paneIndex: number) => void;
 }) {
   // hRef already has the exact shape TVLegend's legendRef prop expects
   // ({ current: TVLegendHandle | null }), so pass it straight through —
   // no proxy needed to observe what TVLegend assigns to legendRef.current.
   return (
-    <TVLegend chrome={chrome} symbol="US.AAPL" timeframe="1m" instances={instances} floatShares={floatShares} paneOffsets={[0, 400]} rightAxisWidth={60}
+    <TVLegend chrome={chrome} symbol="US.AAPL" timeframe="1m" instances={instances} floatShares={floatShares} borrowStatus={borrowStatus} paneOffsets={[0, 400]} rightAxisWidth={60}
       onToggleHidden={onToggle} onEditIndicator={() => {}} onRemoveIndicator={() => {}}
       onClosePane={onClosePane} onToggleCollapsePane={onToggleCollapsePane}
       legendRef={hRef} />
@@ -38,6 +38,17 @@ function Harness({ onToggle, hRef, instances = [ema, volume], floatShares = null
 }
 
 describe("TVLegend", () => {
+  it.each([
+    ["easy_to_borrow", "ETB"],
+    ["hard_to_borrow", "HTB"],
+    [null, "-"],
+    ["special_borrow", "-"],
+  ])("renders borrow status %s as %s in the symbol legend", (borrowStatus, expected) => {
+    const hRef: { current: TVLegendHandle | null } = { current: null };
+    render(<Harness onToggle={() => {}} hRef={hRef} borrowStatus={borrowStatus} />);
+    expect(screen.getByText(`AAPL · 1m · ${expected}`)).toBeTruthy();
+  });
+
   it("writes OHLC + indicator values imperatively via the handle", () => {
     const hRef: { current: TVLegendHandle | null } = { current: null };
     render(<Harness onToggle={() => {}} hRef={hRef} floatShares={12_300_000} />);

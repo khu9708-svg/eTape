@@ -195,11 +195,13 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
     return styleStore.isReady() || !styleStore.isConnected();
   });
   const [chartSymbol, setChartSymbol] = useState(symbol);
-  const floatShares = useSyncExternalStore(
+  const stockDetail = useSyncExternalStore(
     (cb) => stores.stockDetail.subscribe(cb),
-    () => stores.stockDetail.detailFor(chartSymbol)?.floatShares ?? null,
-    () => null,
+    () => stores.stockDetail.detailFor(chartSymbol),
+    () => undefined,
   );
+  const floatShares = stockDetail?.floatShares ?? null;
+  const borrowStatus = stockDetail?.borrowStatus ?? null;
   const [menu, setMenu] = useState<{ x: number; y: number; clientX: number; clientY: number; drawingId: string | null } | null>(null);
   // The top-bar chart-type switcher was removed (candles-only trading UI); the
   // persisted setting is still honored at mount so old workspaces keep rendering.
@@ -1081,7 +1083,7 @@ export function ChartPanel({ config, stores, scheduler, width, height, linkGroup
             onDeleteSelection={() => interactionRef.current?.deleteSelection()}
             onClearAll={clearAllDrawings}
             initialPos={drawingRailPos} onPosChange={(p) => { setDrawingRailPos(p); persist({ drawingRailPos: p }); }} />}
-          <TVLegend chrome={chrome} symbol={chartSymbol} timeframe={timeframe} instances={instances} floatShares={floatShares} paneOffsets={paneOffsets}
+          <TVLegend chrome={chrome} symbol={chartSymbol} timeframe={timeframe} instances={instances} floatShares={floatShares} borrowStatus={borrowStatus} paneOffsets={paneOffsets}
             rightAxisWidth={rightAxisWidth}
             onToggleHidden={toggleIndicatorHidden} onEditIndicator={setSettingsInstanceId} onRemoveIndicator={removeIndicator}
             onClosePane={closePane} onToggleCollapsePane={togglePaneCollapsed}
