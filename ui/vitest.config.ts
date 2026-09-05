@@ -113,6 +113,7 @@ export default defineConfig({
         test: {
           name: 'chrome-regressions',
           include: [
+            'src/sound/**/*.test.{ts,tsx}',
             'src/chrome/AppShell.test.tsx',
             'src/chrome/Catalog.test.tsx',
             'src/chrome/EmptyState.test.tsx',

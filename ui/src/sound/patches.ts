@@ -256,12 +256,15 @@ export interface PatchPlayer {
   unlock(): void; // lazily create + resume the AudioContext (call from a user gesture)
   setMasterVolume(v: number): void; // master gain = v*v (perceptual taper)
   play(fn: PatchFn, variant: Variant): void; // schedule immediately; drop if context isn't running
+  preloadRecording(url: string): Promise<void>;
+  playRecording(url: string): boolean; // true only when playback starts; never queue
 }
 
 export class WebAudioPatchPlayer implements PatchPlayer {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private volume = 0.6;
+  private readonly recordings = new Map<string, AudioBuffer | null>(); // null while loading
 
   unlock(): void {
     const webkitCtor = (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -273,7 +276,7 @@ export class WebAudioPatchPlayer implements PatchPlayer {
       this.master.gain.value = this.volume * this.volume;
       this.master.connect(this.ctx.destination);
     }
-    if (this.ctx.state === "suspended") void this.ctx.resume();
+    if (this.ctx.state === "suspended") void this.ctx.resume().catch(() => {});
   }
 
   setMasterVolume(v: number): void {
@@ -284,5 +287,32 @@ export class WebAudioPatchPlayer implements PatchPlayer {
   play(fn: PatchFn, variant: Variant): void {
     if (!this.ctx || !this.master || this.ctx.state !== "running") return; // drop, never queue
     fn(this.ctx, this.master, variant, this.ctx.currentTime);
+  }
+
+  async preloadRecording(url: string): Promise<void> {
+    const ctx = this.ctx;
+    if (!ctx || this.recordings.has(url)) return;
+    this.recordings.set(url, null);
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Audio load failed: ${response.status}`);
+      this.recordings.set(url, await ctx.decodeAudioData(await response.arrayBuffer()));
+    } catch {
+      this.recordings.delete(url); // another gesture can retry; audio failures stay non-blocking
+    }
+  }
+
+  playRecording(url: string): boolean {
+    const buffer = this.recordings.get(url);
+    if (!buffer || !this.ctx || !this.master || this.ctx.state !== "running") return false;
+    try {
+      const source = this.ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(this.master);
+      source.start();
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

@@ -4,6 +4,13 @@ Workspace shell, dock layout, settings, controls, and execution surfaces. Inputs
 
 The global Top Bar places the browser-derived ET clock and weekday session-transition countdown immediately after connection latency, centers the active hotkey target (Link Group dot, symbol, and venue), and keeps shell actions on the right in every workspace window. Workspace launches request Chromium popup windows sized to the current monitor's available bounds so additional workspaces open app-like and maximized instead of as tabs.
 
+At PRE and RTH transitions, SessionClock asks the shared sound engine to play the
+selected bundled female-voice recording. These Session Transition Announcements respect
+the Session voice toggle, Enable sounds, and volume. Web Locks and a stored ET-date/session token allow
+only one audible workspace to announce; without coordination, playback is best
+effort per workspace. Opening a workspace mid-session never replays the clip.
+The existing weekday-only clock schedule remains the source of these cues.
+
 Dockview owns tabs, activation, native drag-and-drop, merge/split, floating/popout, overflow, and close behavior. A multi-panel group uses Dockview's default tabs above the active Panel Header; a singleton group uses `PanelHeaderTab` as a full-width host for the live `.ledger-header`. `PanelFrame` remains the sole header owner. The host registry is scoped to each Dockview instance, and the inline header fallback exists for standalone panel tests.
 
 Persisted workspaces require `layoutVersion: 8`. `WorkspaceStore` replaces an unmarked or older saved workspace with a blank version-8 workspace and writes that reset immediately. Built-in presets are trusted version-8 layouts. Imported layout payloads must declare version 8 after envelope and shape checks; older or missing versions are rejected as `Invalid layout` and never applied. Hotkey-only imports remain independent.

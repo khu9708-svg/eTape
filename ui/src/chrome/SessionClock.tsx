@@ -3,6 +3,7 @@ import { etParts } from "../render/chart/barBucket";
 import { nextSessionTransition, sessionAt, type Session } from "../render/chart/sessions";
 import { useTheme } from "./ThemeProvider";
 import type { Palette } from "../render/palette";
+import { soundEngine } from "../sound/SoundEngine";
 
 // Module-scope Intl.DateTimeFormat (built once, not per tick) — same idiom as
 // render/chart/chartTheme.ts's ET_TICK formatters. hour12:false + timeZone handles
@@ -13,32 +14,13 @@ const ET_CLOCK = new Intl.DateTimeFormat("en-US", {
 });
 
 const SESSION_LABEL: Record<Session, string> = { pre: "PRE", rth: "RTH", post: "POST", closed: "CLOSED" };
-const SESSION_ANNOUNCEMENT: Partial<Record<Session, string>> = {
-  pre: "Pre-market is now open.",
-  rth: "Market is now open.",
-};
 const SESSION_VOICE_LOCK = "etape.session-voice";
 const SESSION_VOICE_STORAGE_KEY = "etape.sessionVoice";
-const FEMALE_VOICE_HINTS = /female|woman|girl|samantha|zira|susan|karen|moira|victoria|ava|allison|aria|jenny|libby|hazel|joanna|serena|siri/i;
 
 function announceSession(session: Session, tsMs: number): void {
-  const text = SESSION_ANNOUNCEMENT[session];
-  if (!text || typeof SpeechSynthesisUtterance === "undefined") return;
-  const speak = () => {
-    const synth = window.speechSynthesis;
-    if (!synth) return;
-    const utterance = new SpeechSynthesisUtterance(text);
-    const voices = synth.getVoices().filter((voice) => voice.lang === "en-US");
-    utterance.voice = voices.find((voice) => voice.name === "Google US English Female")
-      ?? voices.find((voice) => FEMALE_VOICE_HINTS.test(voice.name))
-      ?? voices.find((voice) => voice.name === "Google US English")
-      ?? null;
-    utterance.lang = "en-US";
-    utterance.rate = 0.90;
-    utterance.pitch = 1.05;
-    synth.speak(utterance);
-  };
-  if (!navigator.locks || typeof navigator.locks.request !== "function") { speak(); return; }
+  if (session !== "pre" && session !== "rth") return;
+  const play = () => soundEngine.sessionOpened(session);
+  if (!navigator.locks || typeof navigator.locks.request !== "function") { play(); return; }
 
   const p = etParts(tsMs);
   const token = `${p.y}-${p.mo.toString().padStart(2, "0")}-${p.d.toString().padStart(2, "0")}:${session}`;
@@ -46,15 +28,18 @@ function announceSession(session: Session, tsMs: number): void {
     void navigator.locks.request(SESSION_VOICE_LOCK, () => {
       try {
         if (localStorage.getItem(SESSION_VOICE_STORAGE_KEY) === token) return;
+      } catch {
+        // Blocked storage falls back to per-workspace playback.
+      }
+      if (!play()) return; // let an unlocked, audible workspace claim the transition
+      try {
         localStorage.setItem(SESSION_VOICE_STORAGE_KEY, token);
       } catch {
-        speak();
-        return;
+        // Playback already started; never repeat it on a storage failure.
       }
-      speak();
-    }).catch(() => speak());
+    }).catch(() => play());
   } catch {
-    speak();
+    play();
   }
 }
 

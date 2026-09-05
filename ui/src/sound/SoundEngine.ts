@@ -1,10 +1,21 @@
 import type { Side } from "../wire/contract";
 import { sideIsSell } from "../wire/orderStatus";
-import { DEFAULT_SOUND_CONFIG, type SoundConfig } from "./SoundConfig";
+import { DEFAULT_SOUND_CONFIG, type SessionVoiceId, type SoundConfig } from "./SoundConfig";
 import { WebAudioPatchPlayer, resolvePatch, type PatchPlayer, type Variant } from "./patches";
 
 const COALESCE_MS = 200;
 const FILL_FRESHNESS_MS = 10_000;
+const SESSION_PREVIEW_GAP_MS = 1_750;
+const SESSION_RECORDINGS: Record<SessionVoiceId, Record<"pre" | "rth", string>> = {
+  googleUsEnglish: {
+    pre: "/audio/premarket-open-google.mp3",
+    rth: "/audio/market-open-google.mp3",
+  },
+  zira: {
+    pre: "/audio/premarket-open.mp3",
+    rth: "/audio/market-open.mp3",
+  },
+};
 
 export interface SoundApi {
   orderPlaced(side: Side): void;
@@ -26,11 +37,28 @@ export class SoundEngine implements SoundApi, SoundSink {
     private readonly now: () => number = () => Date.now(),
   ) {}
 
-  unlock(): void { this.player.unlock(); }
+  unlock(): void {
+    this.player.unlock();
+    for (const recordings of Object.values(SESSION_RECORDINGS)) {
+      for (const url of Object.values(recordings)) void this.player.preloadRecording(url);
+    }
+  }
 
   setConfig(cfg: SoundConfig): void {
     this.cfg = cfg;
     this.player.setMasterVolume(cfg.volume);
+  }
+
+  sessionOpened(session: "pre" | "rth"): boolean {
+    if (!this.cfg.enabled || !this.cfg.sessionVoiceEnabled || this.cfg.volume === 0) return false;
+    return this.player.playRecording(SESSION_RECORDINGS[this.cfg.sessionVoice][session]);
+  }
+
+  previewSessionVoice(): void {
+    if (!this.cfg.sessionVoiceEnabled) return;
+    const recordings = SESSION_RECORDINGS[this.cfg.sessionVoice];
+    if (!this.player.playRecording(recordings.pre)) return;
+    setTimeout(() => this.player.playRecording(recordings.rth), SESSION_PREVIEW_GAP_MS);
   }
 
   orderPlaced(side: Side): void {

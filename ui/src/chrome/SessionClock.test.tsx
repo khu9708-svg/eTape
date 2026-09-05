@@ -1,8 +1,17 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import { SessionClock } from "./SessionClock";
 import { ThemeProvider } from "./ThemeProvider";
+import { soundEngine } from "../sound/SoundEngine";
+
+const originalLocks = navigator.locks;
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  localStorage.removeItem("etape.sessionVoice");
+  Object.defineProperty(navigator, "locks", { configurable: true, value: originalLocks });
+});
 
 describe("SessionClock", () => {
   it("renders the ET wall-clock time and next phase during market hours", () => {
@@ -44,85 +53,66 @@ describe("SessionClock", () => {
     vi.useRealTimers();
   });
 
-  it("announces PRE and RTH transitions with the configured Google voice", () => {
+  it("plays recordings only on PRE and RTH transitions, never on initial mount", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-09T07:59:59Z"));
-    const speak = vi.fn();
-    const voice = { name: "Google US English Female", lang: "en-US" } as SpeechSynthesisVoice;
-    class FakeUtterance {
-      voice: SpeechSynthesisVoice | null = null;
-      lang = "";
-      rate = 1;
-      pitch = 1;
-      constructor(readonly text: string) {}
-    }
-    vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
-    vi.stubGlobal("speechSynthesis", { getVoices: () => [voice], speak });
+    const play = vi.spyOn(soundEngine, "sessionOpened").mockReturnValue(true);
 
     render(<ThemeProvider><SessionClock /></ThemeProvider>);
+    expect(play).not.toHaveBeenCalled();
     act(() => { vi.advanceTimersByTime(1000); });
-    expect(speak).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      text: "Pre-market is now open.", voice, lang: "en-US", rate: 0.90, pitch: 1.05,
-    }));
+    expect(play).toHaveBeenNthCalledWith(1, "pre");
 
     vi.setSystemTime(new Date("2026-07-09T13:29:59Z"));
     act(() => { vi.advanceTimersByTime(1000); });
-    expect(speak).toHaveBeenNthCalledWith(2, expect.objectContaining({ text: "Market is now open." }));
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-  });
-
-  it("does not choose the generic Google voice ahead of an available female voice", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-07-09T07:59:59Z"));
-    const speak = vi.fn();
-    const male = { name: "Google US English", lang: "en-US" } as SpeechSynthesisVoice;
-    const female = { name: "Microsoft Samantha - English (United States)", lang: "en-US" } as SpeechSynthesisVoice;
-    class FakeUtterance {
-      voice: SpeechSynthesisVoice | null = null;
-      lang = "";
-      rate = 1;
-      pitch = 1;
-      constructor(readonly text: string) {}
-    }
-    vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
-    vi.stubGlobal("speechSynthesis", { getVoices: () => [male, female], speak });
-
-    render(<ThemeProvider><SessionClock /></ThemeProvider>);
+    expect(play).toHaveBeenNthCalledWith(2, "rth");
+    vi.setSystemTime(new Date("2026-07-09T19:59:59Z"));
     act(() => { vi.advanceTimersByTime(1000); });
-
-    expect(speak).toHaveBeenCalledWith(expect.objectContaining({ voice: female }));
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
+    vi.setSystemTime(new Date("2026-07-09T23:59:59Z"));
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(play).toHaveBeenCalledTimes(2);
   });
 
   it("announces one shared transition once across workspaces", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-09T07:59:59Z"));
-    const speak = vi.fn();
-    const voice = { name: "Google US English Female", lang: "en-US" } as SpeechSynthesisVoice;
-    class FakeUtterance {
-      voice: SpeechSynthesisVoice | null = null;
-      lang = "";
-      rate = 1;
-      pitch = 1;
-      constructor(readonly text: string) {}
-    }
+    const play = vi.spyOn(soundEngine, "sessionOpened").mockReturnValue(true);
     const request = vi.fn(async (_name: string, callback: () => void) => callback());
-    const previousLocks = navigator.locks;
     Object.defineProperty(navigator, "locks", { configurable: true, value: { request } });
     localStorage.removeItem("etape.sessionVoice");
-    vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
-    vi.stubGlobal("speechSynthesis", { getVoices: () => [voice], speak });
 
     const { unmount } = render(<ThemeProvider><><SessionClock /><SessionClock /></></ThemeProvider>);
     act(() => { vi.advanceTimersByTime(1000); });
-    expect(speak).toHaveBeenCalledTimes(1);
+    expect(play).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem("etape.sessionVoice")).toBe("2026-07-09:pre");
 
     unmount();
-    localStorage.removeItem("etape.sessionVoice");
-    Object.defineProperty(navigator, "locks", { configurable: true, value: previousLocks });
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
+    render(<ThemeProvider><SessionClock /></ThemeProvider>);
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(play).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets another workspace play when the first is muted or audio is unavailable", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-09T07:59:59Z"));
+    const play = vi.spyOn(soundEngine, "sessionOpened").mockReturnValueOnce(false).mockReturnValue(true);
+    const request = vi.fn(async (_name: string, callback: () => void) => callback());
+    Object.defineProperty(navigator, "locks", { configurable: true, value: { request } });
+    render(<ThemeProvider><><SessionClock /><SessionClock /><SessionClock /></></ThemeProvider>);
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(play).toHaveBeenCalledTimes(2);
+    expect(localStorage.getItem("etape.sessionVoice")).toBe("2026-07-09:pre");
+  });
+
+  it("does not replay a clip when storing the shared announcement token fails", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-09T07:59:59Z"));
+    const play = vi.spyOn(soundEngine, "sessionOpened").mockReturnValue(true);
+    const request = vi.fn(async (_name: string, callback: () => void) => callback());
+    Object.defineProperty(navigator, "locks", { configurable: true, value: { request } });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("storage blocked"); });
+    render(<ThemeProvider><SessionClock /></ThemeProvider>);
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(play).toHaveBeenCalledOnce();
   });
 });

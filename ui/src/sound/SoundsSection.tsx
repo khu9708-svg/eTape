@@ -5,6 +5,7 @@ import {
   DEFAULT_SOUND_CONFIG,
   FILL_SOUND_IDS, REJECT_SOUND_IDS, SCANNER_SOUND_IDS,
   FILL_SOUND_LABELS, REJECT_SOUND_LABELS, SCANNER_SOUND_LABELS,
+  SESSION_VOICE_IDS, SESSION_VOICE_LABELS,
   type FillSoundId, type RejectSoundId, type ScannerSoundId,
 } from "./SoundConfig";
 import { useTheme } from "../chrome/ThemeProvider";
@@ -33,6 +34,19 @@ export function SoundsSection(): JSX.Element {
         <input data-testid="sound-enabled" type="checkbox" checked={config.enabled} onChange={(e) => save({ ...config, enabled: e.target.checked })} />
         <span>Enable sounds</span>
       </label>
+
+      <div style={row}>
+        <input data-testid="sound-session-on" type="checkbox" checked={config.sessionVoiceEnabled}
+          onChange={(e) => save({ ...config, sessionVoiceEnabled: e.target.checked })} />
+        <span style={{ width: 90 }}>Session voice</span>
+        <select data-testid="sound-session-voice" disabled={!config.sessionVoiceEnabled} value={config.sessionVoice} style={inp}
+          onChange={(e) => save({ ...config, sessionVoice: e.target.value as typeof config.sessionVoice })}>
+          {SESSION_VOICE_IDS.map((id) => <option key={id} value={id}>{SESSION_VOICE_LABELS[id]}</option>)}
+        </select>
+        <button data-testid="sound-preview-session" aria-label="Preview session voice" title="Preview session voice" disabled={!config.sessionVoiceEnabled}
+          style={{ ...inp, cursor: config.sessionVoiceEnabled ? "pointer" : "not-allowed" }}
+          onClick={() => soundEngine.previewSessionVoice()}>▶</button>
+      </div>
 
       <div style={row}>
         <input data-testid="sound-fill-on" type="checkbox" checked={fillOn}

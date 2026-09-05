@@ -11,6 +11,8 @@ function fakePlayer() {
     unlock: vi.fn(),
     setMasterVolume: vi.fn(),
     play: (fn, variant) => { played.push({ fn, variant }); },
+    preloadRecording: vi.fn(async () => {}),
+    playRecording: vi.fn(() => true),
   };
   return player;
 }
@@ -84,9 +86,57 @@ describe("SoundEngine", () => {
     expect(player.played).toHaveLength(1);
   });
 
+  it("previews both selected session recordings and respects its toggle", () => {
+    vi.useFakeTimers();
+    try {
+      const { eng, player } = make(now);
+      eng.setConfig({ ...DEFAULT_SOUND_CONFIG, sessionVoiceEnabled: false });
+      eng.previewSessionVoice();
+      expect(player.playRecording).not.toHaveBeenCalled();
+
+      eng.setConfig({ ...DEFAULT_SOUND_CONFIG, sessionVoice: "zira" });
+      eng.previewSessionVoice();
+      expect(player.playRecording).toHaveBeenNthCalledWith(1, "/audio/premarket-open.mp3");
+      vi.advanceTimersByTime(1_750);
+      expect(player.playRecording).toHaveBeenNthCalledWith(2, "/audio/market-open.mp3");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("setConfig pushes volume into the player", () => {
     const { eng, player } = make(now);
     eng.setConfig({ ...DEFAULT_SOUND_CONFIG, volume: 0.4 });
     expect(player.setMasterVolume).toHaveBeenLastCalledWith(0.4);
+  });
+
+  it("preloads both voices on unlock and obeys voice, mute, and volume", () => {
+    const { eng, player } = make(now);
+    eng.unlock();
+    expect(player.unlock).toHaveBeenCalledOnce();
+    expect(player.preloadRecording).toHaveBeenCalledWith("/audio/premarket-open-google.mp3");
+    expect(player.preloadRecording).toHaveBeenCalledWith("/audio/market-open-google.mp3");
+    expect(player.preloadRecording).toHaveBeenCalledWith("/audio/premarket-open.mp3");
+    expect(player.preloadRecording).toHaveBeenCalledWith("/audio/market-open.mp3");
+    expect(eng.sessionOpened("pre")).toBe(true);
+    expect(eng.sessionOpened("rth")).toBe(true);
+    expect(player.playRecording).toHaveBeenNthCalledWith(1, "/audio/premarket-open-google.mp3");
+    expect(player.playRecording).toHaveBeenNthCalledWith(2, "/audio/market-open-google.mp3");
+    eng.setConfig({ ...DEFAULT_SOUND_CONFIG, sessionVoice: "zira" });
+    expect(eng.sessionOpened("pre")).toBe(true);
+    expect(eng.sessionOpened("rth")).toBe(true);
+    expect(player.playRecording).toHaveBeenNthCalledWith(3, "/audio/premarket-open.mp3");
+    expect(player.playRecording).toHaveBeenNthCalledWith(4, "/audio/market-open.mp3");
+    eng.setConfig({ ...DEFAULT_SOUND_CONFIG });
+    eng.setConfig({ ...DEFAULT_SOUND_CONFIG, enabled: false });
+    expect(eng.sessionOpened("pre")).toBe(false);
+    eng.setConfig({ ...DEFAULT_SOUND_CONFIG, sessionVoiceEnabled: false });
+    expect(eng.sessionOpened("rth")).toBe(false);
+    eng.setConfig({ ...DEFAULT_SOUND_CONFIG, volume: 0 });
+    expect(eng.sessionOpened("rth")).toBe(false);
+    expect(player.playRecording).toHaveBeenCalledTimes(4);
+    eng.setConfig({ ...DEFAULT_SOUND_CONFIG });
+    vi.mocked(player.playRecording).mockReturnValue(false);
+    expect(eng.sessionOpened("pre")).toBe(false);
   });
 });

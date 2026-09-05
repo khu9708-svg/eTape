@@ -22,6 +22,30 @@ describe("SoundsSection", () => {
     expect(commands.sendCommand).toHaveBeenCalledWith("SetConfig", { key: "soundConfig", value: expect.objectContaining({ fillSound: "marimba" }) });
   });
 
+  it("saves the selected recorded session voice", async () => {
+    const { commands } = wrap();
+    await waitFor(() => expect(commands.sendCommand).toHaveBeenCalledWith("GetConfig", { key: "soundConfig" }));
+    fireEvent.change(screen.getByTestId("sound-session-voice"), { target: { value: "zira" } });
+    expect(commands.sendCommand).toHaveBeenCalledWith("SetConfig", { key: "soundConfig", value: expect.objectContaining({ sessionVoice: "zira" }) });
+  });
+
+  it("saves the session voice toggle and disables its preview when off", async () => {
+    const { commands } = wrap();
+    await waitFor(() => expect(commands.sendCommand).toHaveBeenCalledWith("GetConfig", { key: "soundConfig" }));
+    fireEvent.click(screen.getByTestId("sound-session-on"));
+    expect(commands.sendCommand).toHaveBeenCalledWith("SetConfig", { key: "soundConfig", value: expect.objectContaining({ sessionVoiceEnabled: false }) });
+    expect((screen.getByTestId("sound-session-voice") as HTMLSelectElement).disabled).toBe(true);
+    expect((screen.getByTestId("sound-preview-session") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("preview button calls the selected session voice engine", async () => {
+    const spy = vi.spyOn(soundEngine, "previewSessionVoice");
+    const { commands } = wrap();
+    await waitFor(() => expect(commands.sendCommand).toHaveBeenCalledWith("GetConfig", { key: "soundConfig" }));
+    fireEvent.click(screen.getByTestId("sound-preview-session"));
+    expect(spy).toHaveBeenCalledOnce();
+  });
+
   it("preview button calls the engine", async () => {
     const spy = vi.spyOn(soundEngine, "preview");
     const { commands } = wrap();

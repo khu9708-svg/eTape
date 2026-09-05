@@ -11,18 +11,22 @@ describe("sanitizeSoundConfig", () => {
   it("keeps valid fields and falls back per-field on invalid ones", () => {
     const out = sanitizeSoundConfig({
       enabled: false,
+      sessionVoiceEnabled: false,
       volume: 2,               // out of range -> clamp to default
       fillSound: "marimba",    // valid
       placeClick: "yes",       // wrong type -> default
       rejectSound: "bogus",    // invalid id -> default
       scannerSound: "off",     // valid ("off" allowed)
+      sessionVoice: "zira",    // valid
     });
     expect(out.enabled).toBe(false);
+    expect(out.sessionVoiceEnabled).toBe(false);
     expect(out.volume).toBe(DEFAULT_SOUND_CONFIG.volume);
     expect(out.fillSound).toBe("marimba");
     expect(out.placeClick).toBe(DEFAULT_SOUND_CONFIG.placeClick);
     expect(out.rejectSound).toBe(DEFAULT_SOUND_CONFIG.rejectSound);
     expect(out.scannerSound).toBe("off");
+    expect(out.sessionVoice).toBe("zira");
   });
 
   it("clamps volume to [0,1]", () => {
@@ -30,10 +34,15 @@ describe("sanitizeSoundConfig", () => {
     expect(sanitizeSoundConfig({ volume: 0.3 }).volume).toBe(0.3);
   });
 
+  it("defaults an unknown session voice to Google US English", () => {
+    expect(sanitizeSoundConfig({ sessionVoice: "bogus" }).sessionVoice).toBe("googleUsEnglish");
+  });
+
   it("DEFAULT_SOUND_CONFIG matches the approved spec", () => {
     expect(DEFAULT_SOUND_CONFIG).toEqual({
-      enabled: true, volume: 0.6, fillSound: "twoTone",
+      enabled: true, sessionVoiceEnabled: true, volume: 0.6, fillSound: "twoTone",
       placeClick: true, rejectSound: "alertBeeps", scannerSound: "arpeggio",
+      sessionVoice: "googleUsEnglish",
     });
   });
 });

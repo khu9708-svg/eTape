@@ -3,30 +3,36 @@
 export type FillSoundId = "softBlip" | "twoTone" | "marimba" | "cashBell" | "tick" | "glassPing" | "pop";
 export type RejectSoundId = "buzz" | "dunDun" | "doubleKnock" | "alertBeeps" | "powerDown";
 export type ScannerSoundId = "sonarPing" | "arpeggio" | "chirp" | "highChime" | "singingBowl";
+export type SessionVoiceId = "googleUsEnglish" | "zira";
 
 export interface SoundConfig {
   enabled: boolean;                     // master
+  sessionVoiceEnabled: boolean;
   volume: number;                       // 0..1
   fillSound: FillSoundId | "off";
   placeClick: boolean;
   rejectSound: RejectSoundId | "off";
   scannerSound: ScannerSoundId | "off";
+  sessionVoice: SessionVoiceId;
 }
 
 export const SOUND_CONFIG_KEY = "soundConfig";
 
 export const DEFAULT_SOUND_CONFIG: SoundConfig = {
   enabled: true,
+  sessionVoiceEnabled: true,
   volume: 0.6,
   fillSound: "twoTone",
   placeClick: true,
   rejectSound: "alertBeeps",
   scannerSound: "arpeggio",
+  sessionVoice: "googleUsEnglish",
 };
 
 export const FILL_SOUND_IDS: readonly FillSoundId[] = ["softBlip", "twoTone", "marimba", "cashBell", "tick", "glassPing", "pop"];
 export const REJECT_SOUND_IDS: readonly RejectSoundId[] = ["buzz", "dunDun", "doubleKnock", "alertBeeps", "powerDown"];
 export const SCANNER_SOUND_IDS: readonly ScannerSoundId[] = ["sonarPing", "arpeggio", "chirp", "highChime", "singingBowl"];
+export const SESSION_VOICE_IDS: readonly SessionVoiceId[] = ["googleUsEnglish", "zira"];
 
 // Dropdown labels — match the audition-page (prototypes/fill-sounds.html) names verbatim.
 export const FILL_SOUND_LABELS: Record<FillSoundId, string> = {
@@ -41,9 +47,17 @@ export const SCANNER_SOUND_LABELS: Record<ScannerSoundId, string> = {
   sonarPing: "Scan 1 — Sonar Ping", arpeggio: "Scan 2 — Arpeggio", chirp: "Scan 3 — Chirp",
   highChime: "Scan 4 — High Chime", singingBowl: "Scan 5 — Singing Bowl",
 };
+export const SESSION_VOICE_LABELS: Record<SessionVoiceId, string> = {
+  googleUsEnglish: "Google US English (recorded)",
+  zira: "Microsoft Zira (recorded)",
+};
 
 function optionOrOff<T extends string>(v: unknown, allowed: readonly T[], fallback: T | "off"): T | "off" {
   if (v === "off") return "off";
+  return typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
+}
+
+function optionOrDefault<T extends string>(v: unknown, allowed: readonly T[], fallback: T): T {
   return typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
 }
 
@@ -61,10 +75,12 @@ export function sanitizeSoundConfig(raw: unknown): SoundConfig {
   const r = raw as Record<string, unknown>;
   return {
     enabled: typeof r.enabled === "boolean" ? r.enabled : DEFAULT_SOUND_CONFIG.enabled,
+    sessionVoiceEnabled: typeof r.sessionVoiceEnabled === "boolean" ? r.sessionVoiceEnabled : DEFAULT_SOUND_CONFIG.sessionVoiceEnabled,
     volume: sanitizeVolume(r.volume),
     fillSound: optionOrOff(r.fillSound, FILL_SOUND_IDS, DEFAULT_SOUND_CONFIG.fillSound),
     placeClick: typeof r.placeClick === "boolean" ? r.placeClick : DEFAULT_SOUND_CONFIG.placeClick,
     rejectSound: optionOrOff(r.rejectSound, REJECT_SOUND_IDS, DEFAULT_SOUND_CONFIG.rejectSound),
     scannerSound: optionOrOff(r.scannerSound, SCANNER_SOUND_IDS, DEFAULT_SOUND_CONFIG.scannerSound),
+    sessionVoice: optionOrDefault(r.sessionVoice, SESSION_VOICE_IDS, DEFAULT_SOUND_CONFIG.sessionVoice),
   };
 }
