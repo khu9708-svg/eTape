@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/earlisreal/eTape/engine/internal/clock"
+	"github.com/earlisreal/eTape/engine/internal/eligibility"
 	"github.com/earlisreal/eTape/engine/internal/exec"
 	"github.com/earlisreal/eTape/engine/internal/feed"
 	"github.com/earlisreal/eTape/engine/internal/locates"
@@ -39,6 +40,10 @@ type LocateRegistry interface {
 	ProviderFor(exec.VenueID) (locates.Provider, bool)
 }
 
+type EligibilityRegistry interface {
+	ProviderFor(exec.VenueID) (eligibility.Provider, bool)
+}
+
 type GateLimits struct {
 	MaxOrderValue     float64
 	MaxPositionValue  float64
@@ -71,6 +76,7 @@ type Config struct {
 	DistDir                        string
 	Demo                           bool
 	AccountDemand                  *exec.AccountDemandRegistry
+	Eligibility                    EligibilityRegistry
 	OnConfigSet                    func(key, value string)
 }
 
@@ -111,6 +117,7 @@ func New(clk clock.Clock, cfg Config, ex ExecCore, st Stores, ind Indicators, va
 	cmd.startDemo = startDemo
 	qry := newQueries(st, clk, h)
 	qry.locates = locateRegistry
+	qry.eligibility = cfg.Eligibility
 	srv := NewServer(h, cmd, qry, ServerConfig{DistDir: cfg.DistDir, OutBuf: cfg.OutBuf})
 	return h, srv
 }

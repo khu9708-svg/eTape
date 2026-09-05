@@ -1077,6 +1077,10 @@ func TestAdapter_LocateEligibilityUsesStartupAssetCache(t *testing.T) {
 	if _, found := a.LocateEligibility("US.UNKNOWN"); found {
 		t.Fatal("unknown symbol must remain unknown without a per-symbol REST lookup")
 	}
+	instrument, found, err := a.VenueInstrumentEligibility(context.Background(), "US.AAPL")
+	if err != nil || !found || instrument.Tradable == nil || !*instrument.Tradable || instrument.Marginable == nil || !*instrument.Marginable || instrument.Shortable == nil || !*instrument.Shortable {
+		t.Fatalf("venue instrument eligibility = %+v, found=%v, err=%v", instrument, found, err)
+	}
 	if got := assetCalls.Load(); got != 1 {
 		t.Fatalf("asset endpoint calls = %d, want only the startup snapshot call", got)
 	}

@@ -213,6 +213,18 @@ type ExecStatus struct {
 	Venues      []VenueStatus    `json:"venues"`
 }
 
+// VenueInstrumentEligibility is the shared read-only capability used by the
+// shell's selected venue/symbol cue. A nil permission was not supplied by the
+// venue and must not be rendered as a guess.
+type VenueInstrumentEligibility struct {
+	Supported  bool   `json:"supported"`
+	Found      bool   `json:"found"`
+	Shortable  *bool  `json:"shortable" tstype:"boolean | null,required"`
+	Marginable *bool  `json:"marginable" tstype:"boolean | null,required"`
+	Tradable   *bool  `json:"tradable" tstype:"boolean | null,required"`
+	Error      string `json:"error"`
+}
+
 // LocateEligibility is sourced from Alpaca's startup active-assets cache.
 // A nil field means Alpaca did not provide that piece of metadata.
 type LocateEligibility struct {
@@ -488,6 +500,11 @@ type QueryFillsArgs struct {
 	Symbol string `json:"symbol"`
 	FromMs int64  `json:"fromMs"`
 	ToMs   int64  `json:"toMs"`
+}
+
+type QueryVenueInstrumentEligibilityArgs struct {
+	Venue  string `json:"venue"`
+	Symbol string `json:"symbol"`
 }
 
 type QueryLocateEligibilityArgs struct {

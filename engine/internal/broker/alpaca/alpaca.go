@@ -27,6 +27,7 @@ import (
 
 	"github.com/earlisreal/eTape/engine/internal/clock"
 	"github.com/earlisreal/eTape/engine/internal/creds"
+	"github.com/earlisreal/eTape/engine/internal/eligibility"
 	"github.com/earlisreal/eTape/engine/internal/exec"
 	"github.com/earlisreal/eTape/engine/internal/locates"
 )
@@ -160,6 +161,7 @@ type posBasisEntry struct {
 }
 
 var _ exec.Broker = (*Adapter)(nil)
+var _ eligibility.Provider = (*Adapter)(nil)
 var _ locates.Provider = (*Adapter)(nil)
 
 // New builds an Alpaca Adapter. RESTBase/WSURL fall back to Alpaca's
@@ -288,6 +290,18 @@ func (a *Adapter) AssetStatus(symbol string) (AssetStatus, bool) {
 	status, ok := a.assetsBySymbol[symbol]
 	a.assetMu.RUnlock()
 	return status, ok
+}
+
+// VenueInstrumentEligibility reads the startup active-assets cache only. It
+// deliberately excludes borrow status, which belongs to the locate workflow.
+func (a *Adapter) VenueInstrumentEligibility(_ context.Context, symbol string) (eligibility.Eligibility, bool, error) {
+	status, ok := a.AssetStatus(symbol)
+	if !ok {
+		return eligibility.Eligibility{}, false, nil
+	}
+	return eligibility.Eligibility{
+		Shortable: status.Shortable, Marginable: status.Marginable, Tradable: status.Tradable,
+	}, true, nil
 }
 
 // LocateEligibility reads the startup active-assets cache only. It never

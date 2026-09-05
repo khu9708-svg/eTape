@@ -2,7 +2,7 @@
 
 Workspace shell, dock layout, settings, controls, and execution surfaces. Inputs: imperative stores plus user actions; outputs: wire commands and panel/controller lifecycle. Children: [execution UI](exec/README.md), [panels](panels/README.md), `controls`. React state stays low-frequency. Test: `npm test`.
 
-The global Top Bar places the browser-derived ET clock and weekday session-transition countdown immediately after connection latency, centers the active hotkey target (Link Group dot, symbol, and venue), and keeps shell actions on the right in every workspace window. Workspace launches request Chromium popup windows sized to the current monitor's available bounds so additional workspaces open app-like and maximized instead of as tabs.
+The global Top Bar places the browser-derived ET clock and weekday session-transition countdown immediately after connection latency, centers the active hotkey target (Link Group dot, symbol, venue, and the non-interactive T-M-S Venue Instrument Eligibility group), and keeps shell actions on the right in every workspace window. Eligibility is queried for the exact ready target, refreshed every 60 seconds, and hidden when unsupported, unknown, or failed. Workspace launches request Chromium popup windows sized to the current monitor's available bounds so additional workspaces open app-like and maximized instead of as tabs.
 
 At PRE and RTH transitions, SessionClock asks the shared sound engine to play the
 selected bundled female-voice recording. These Session Transition Announcements respect

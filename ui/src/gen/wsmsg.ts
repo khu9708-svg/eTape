@@ -307,6 +307,19 @@ export interface ExecStatus {
   venues: VenueStatus[];
 }
 /**
+ * VenueInstrumentEligibility is the shared read-only capability used by the
+ * shell's selected venue/symbol cue. A nil permission was not supplied by the
+ * venue and must not be rendered as a guess.
+ */
+export interface VenueInstrumentEligibility {
+  supported: boolean;
+  found: boolean;
+  shortable: boolean | null;
+  marginable: boolean | null;
+  tradable: boolean | null;
+  error: string;
+}
+/**
  * LocateEligibility is sourced from Alpaca's startup active-assets cache.
  * A nil field means Alpaca did not provide that piece of metadata.
  */
@@ -563,6 +576,10 @@ export interface QueryFillsArgs {
   symbol: string;
   fromMs: number /* int64 */;
   toMs: number /* int64 */;
+}
+export interface QueryVenueInstrumentEligibilityArgs {
+  venue: string;
+  symbol: string;
 }
 export interface QueryLocateEligibilityArgs {
   venue: string;

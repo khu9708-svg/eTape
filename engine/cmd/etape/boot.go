@@ -19,6 +19,7 @@ import (
 	"github.com/earlisreal/eTape/engine/internal/clock"
 	"github.com/earlisreal/eTape/engine/internal/config"
 	"github.com/earlisreal/eTape/engine/internal/creds"
+	"github.com/earlisreal/eTape/engine/internal/eligibility"
 	"github.com/earlisreal/eTape/engine/internal/exec"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend"
 	getglobalstate "github.com/earlisreal/eTape/engine/internal/feed/opend/pb/getglobalstate"
@@ -176,6 +177,16 @@ func locateRegistry(vbs []venueBroker) *locates.Registry {
 	for _, vb := range vbs {
 		if a, ok := vb.Broker.(*alpaca.Adapter); ok {
 			registry.Register(vb.ID, a)
+		}
+	}
+	return registry
+}
+
+func venueEligibilityRegistry(vbs []venueBroker) *eligibility.Registry {
+	registry := eligibility.NewRegistry()
+	for _, vb := range vbs {
+		if provider, ok := vb.Broker.(eligibility.Provider); ok {
+			registry.Register(vb.ID, provider)
 		}
 	}
 	return registry

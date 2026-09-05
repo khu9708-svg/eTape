@@ -16,19 +16,23 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync/atomic"
 
 	"google.golang.org/protobuf/proto"
 
 	"github.com/earlisreal/eTape/engine/internal/broker/netx"
 	"github.com/earlisreal/eTape/engine/internal/clock"
+	"github.com/earlisreal/eTape/engine/internal/eligibility"
 	"github.com/earlisreal/eTape/engine/internal/exec"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/common"
+	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/qotcommon"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdcommon"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdflowsummary"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdgetacclist"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdgetfunds"
+	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdgetmarginratio"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdgetorderlist"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdgetpositionlist"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdmodifyorder"
@@ -368,6 +372,40 @@ func (tc *trdClient) getFunds(ctx context.Context) (*trdcommon.Funds, error) {
 		return nil, fmt.Errorf("moomoo: get funds response missing funds payload")
 	}
 	return funds, nil
+}
+
+// getMarginRatio fetches account-specific US permissions for one symbol.
+// OpenD's long and short permits map to the generic marginable and shortable
+// fields; it does not provide a tradable flag.
+func (tc *trdClient) getMarginRatio(ctx context.Context, symbol string) (eligibility.Eligibility, bool, error) {
+	wireSym := wireSymbol(strings.ToUpper(strings.TrimSpace(symbol)))
+	if wireSym == "" {
+		return eligibility.Eligibility{}, false, errors.New("moomoo: margin ratio symbol is required")
+	}
+	req := &trdgetmarginratio.Request{C2S: &trdgetmarginratio.C2S{
+		Header: trdHeader(tc.accID, tc.env),
+		SecurityList: []*qotcommon.Security{{
+			Market: proto.Int32(int32(qotcommon.QotMarket_QotMarket_US_Security)),
+			Code:   proto.String(wireSym),
+		}},
+	}}
+	fr, err := tc.c.Request(ctx, opend.ProtoTrdGetMarginRatio, req)
+	if err != nil {
+		return eligibility.Eligibility{}, false, fmt.Errorf("moomoo: get margin ratio transport: %w", err)
+	}
+	var resp trdgetmarginratio.Response
+	if err := proto.Unmarshal(fr.Body, &resp); err != nil {
+		return eligibility.Eligibility{}, false, fmt.Errorf("moomoo: decode margin ratio response: %w", err)
+	}
+	if !retOK(resp.GetRetType()) {
+		return eligibility.Eligibility{}, false, retErr("get margin ratio", resp.GetRetType(), resp.GetRetMsg())
+	}
+	for _, info := range resp.GetS2C().GetMarginRatioInfoList() {
+		if info != nil && info.GetSecurity() != nil && info.GetSecurity().GetCode() == wireSym {
+			return eligibility.Eligibility{Marginable: info.IsLongPermit, Shortable: info.IsShortPermit}, true, nil
+		}
+	}
+	return eligibility.Eligibility{}, false, nil
 }
 
 // getCashFlow returns the signed cash movements for one ET clearing date.

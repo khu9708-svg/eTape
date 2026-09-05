@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { TopBar, targetCueFor } from "./TopBar";
 import { HealthStore } from "../data/HealthStore";
 import { ThemeProvider } from "./ThemeProvider";
@@ -59,5 +59,42 @@ describe("TopBar", () => {
       expect(element.tagName).toBe("SPAN");
       view.unmount();
     }
+  });
+  it("queries the exact target venue and renders only supplied permissions in T-M-S order", async () => {
+    const commands = {
+      sendQuery: vi.fn(async () => ({
+        supported: true, found: true, tradable: true, marginable: false, shortable: null, error: "",
+      })),
+    };
+    render(<ThemeProvider><TopBar {...base} commands={commands} targetCue={targetCueFor({
+      ownerWindow: "a", panel: "p", group: "green", symbol: "US.AAPL", venue: "alpaca-paper", revision: 1,
+    })} /></ThemeProvider>);
+
+    await waitFor(() => expect(commands.sendQuery).toHaveBeenCalledWith(
+      "QueryVenueInstrumentEligibility", { venue: "alpaca-paper", symbol: "US.AAPL" },
+    ));
+    const group = await screen.findByTestId("venue-instrument-eligibility");
+    expect(group.textContent).toBe("TM");
+    expect(screen.getByLabelText("Tradable: Yes").getAttribute("title")).toBe("Tradable: Yes");
+    expect(screen.getByLabelText("Marginable: No").getAttribute("title")).toBe("Marginable: No");
+    expect(screen.queryByLabelText(/Shortable:/)).toBeNull();
+  });
+  it("ignores a response for an old target", async () => {
+    const pending: Array<(value: unknown) => void> = [];
+    const commands = {
+      sendQuery: vi.fn(() => new Promise<unknown>((resolve) => pending.push(resolve))),
+    };
+    const target = (symbol: string) => targetCueFor({
+      ownerWindow: "a", panel: "p", group: "green", symbol, venue: "alpaca-paper", revision: 1,
+    });
+    const view = render(<ThemeProvider><TopBar {...base} commands={commands} targetCue={target("US.AAPL")} /></ThemeProvider>);
+    await waitFor(() => expect(pending).toHaveLength(1));
+    view.rerender(<ThemeProvider><TopBar {...base} commands={commands} targetCue={target("US.TSLA")} /></ThemeProvider>);
+    await waitFor(() => expect(pending).toHaveLength(2));
+
+    await act(async () => pending[0]({ supported: true, found: true, tradable: true, marginable: null, shortable: null, error: "" }));
+    expect(screen.queryByTestId("venue-instrument-eligibility")).toBeNull();
+    await act(async () => pending[1]({ supported: true, found: true, tradable: false, marginable: null, shortable: null, error: "" }));
+    expect(await screen.findByLabelText("Tradable: No")).toBeTruthy();
   });
 });

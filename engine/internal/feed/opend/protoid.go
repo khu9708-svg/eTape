@@ -54,6 +54,7 @@ const (
 	ProtoTrdSubAccPush      uint32 = 2008
 	ProtoTrdGetFunds        uint32 = 2101
 	ProtoTrdGetPositionList uint32 = 2102
+	ProtoTrdGetMarginRatio  uint32 = 2223
 	ProtoTrdFlowSummary     uint32 = 2226
 	ProtoTrdGetOrderList    uint32 = 2201
 	ProtoTrdPlaceOrder      uint32 = 2202

@@ -8,7 +8,6 @@ import (
 )
 
 type Provider interface {
-	LocateEligibility(symbol string) (Eligibility, bool)
 	QuoteLocates(ctx context.Context, symbols []string) (QuoteResult, error)
 	CreateLocate(ctx context.Context, req Request) (Record, error)
 	ListLocates(ctx context.Context, filter ListFilter) (Page, error)

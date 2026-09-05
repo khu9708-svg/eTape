@@ -390,6 +390,16 @@ func TestLocateRegistryRoutesEveryAlpacaVenueExactly(t *testing.T) {
 	if _, ok := registry.ProviderFor("sim"); ok {
 		t.Fatal("sim must not be routed to a locate provider")
 	}
+	eligibilityRegistry := venueEligibilityRegistry(vbs)
+	for _, venue := range []string{"alpaca-paper", "alpaca-live"} {
+		got, ok := eligibilityRegistry.ProviderFor(exec.VenueID(venue))
+		if !ok || got != byVenue[venue] {
+			t.Fatalf("eligibility provider for %s = %T/%v, want its concrete adapter", venue, got, ok)
+		}
+	}
+	if _, ok := eligibilityRegistry.ProviderFor("sim"); ok {
+		t.Fatal("sim must not be routed to venue instrument eligibility")
+	}
 }
 
 // TestResolveBackfillAlpacaCredsExplicitKeyWins verifies an explicit, resolvable

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { LatencyReadout } from "./LatencyReadout";
 import { SessionClock } from "./SessionClock";
 import type { HealthStore } from "../data/HealthStore";
@@ -6,7 +7,12 @@ import { Button } from "./controls/Button";
 import type { LinkGroup } from "./linkGroups";
 import type { HotkeyTarget } from "./hotkeyTarget";
 import type { VenueID } from "../wire/contract";
+import type { VenueInstrumentEligibility } from "../gen/wsmsg";
 import { bareSymbol } from "./exec/orderStatus";
+
+interface TopBarCommands {
+  sendQuery(name: string, args: unknown): Promise<unknown>;
+}
 
 // Padlock state icon for the arm/disarm chip. stroke="currentColor" so it
 // inherits the chip's state color automatically (no separate color prop) —
@@ -35,6 +41,7 @@ export interface TopBarProps {
   onOpenSettings: () => void;
   onOpenConnection: () => void;
   onOpenPractice: () => void;
+  commands?: TopBarCommands;
   targetCue?: HotkeyTargetCue;
 }
 
@@ -61,7 +68,63 @@ export function targetCueFor(target: HotkeyTarget | null): HotkeyTargetCue {
   return { state: "ready", group: target.group, symbol: target.symbol, venue: target.venue };
 }
 
-function TargetCue({ cue, palette }: { cue: HotkeyTargetCue; palette: ReturnType<typeof useTheme>["palette"] }): JSX.Element {
+function EligibilityTiles({ value, palette }: { value: VenueInstrumentEligibility; palette: ReturnType<typeof useTheme>["palette"] }): JSX.Element | null {
+  if (!value.supported || !value.found) return null;
+  const fields: Array<[string, string, boolean | null | undefined]> = [
+    ["T", "Tradable", value.tradable],
+    ["M", "Marginable", value.marginable],
+    ["S", "Shortable", value.shortable],
+  ];
+  const available = fields.filter(([, , permission]) => permission !== null && permission !== undefined);
+  if (available.length === 0) return null;
+  return (
+    <span className="top-bar-eligibility" data-testid="venue-instrument-eligibility" role="group"
+      aria-label="Venue Instrument Eligibility"
+      style={{ display: "inline-flex", alignItems: "center", gap: 3, flex: "0 0 auto" }}>
+      <span aria-hidden="true" style={{ width: 1, height: 13, background: palette.borderStrong, margin: "0 2px" }} />
+      {available.map(([monogram, name, permission]) => {
+        const label = `${name}: ${permission ? "Yes" : "No"}`;
+        return (
+          <span key={name} data-testid={`eligibility-${name.toLowerCase()}`} role="img" aria-label={label} title={label}
+            style={{ position: "relative", display: "inline-flex", alignItems: "center", justifyContent: "center",
+              width: 16, height: 16, borderRadius: 3, background: permission ? palette.ok : palette.danger,
+              color: palette.bg, fontFamily: "IBM Plex Mono, ui-monospace, monospace", fontSize: 10, fontWeight: 700 }}>
+            <span aria-hidden="true">{monogram}</span>
+            {!permission && <span aria-hidden="true" style={{ position: "absolute", width: 17, height: 1,
+              background: palette.bg, transform: "rotate(-45deg)" }} />}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+function TargetCue({ cue, palette, commands }: { cue: HotkeyTargetCue; palette: ReturnType<typeof useTheme>["palette"]; commands?: TopBarCommands | undefined }): JSX.Element {
+  const eligibilityKey = cue.state === "ready" ? `${cue.venue}\u0000${cue.symbol}` : "";
+  const [eligibility, setEligibility] = useState<{ key: string; value: VenueInstrumentEligibility | null }>({ key: "", value: null });
+  useEffect(() => {
+    if (!commands || !eligibilityKey) {
+      setEligibility({ key: eligibilityKey, value: null });
+      return;
+    }
+    let current = true;
+    setEligibility((previous) => previous.key === eligibilityKey ? previous : { key: eligibilityKey, value: null });
+    const refresh = () => {
+      void commands.sendQuery("QueryVenueInstrumentEligibility", { venue: cue.venue, symbol: cue.symbol }).then((raw) => {
+        if (!current) return;
+        const value = raw as VenueInstrumentEligibility;
+        setEligibility({ key: eligibilityKey, value: value && !value.error ? value : null });
+      }).catch(() => {
+        if (current) setEligibility({ key: eligibilityKey, value: null });
+      });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    return () => {
+      current = false;
+      window.clearInterval(timer);
+    };
+  }, [commands, cue.symbol, cue.venue, eligibilityKey]);
   const dot = cue.group === null ? palette.textMuted : {
     red: palette.linkRed, green: palette.linkGreen, blue: palette.linkBlue, yellow: palette.linkYellow,
   }[cue.group];
@@ -85,6 +148,7 @@ function TargetCue({ cue, palette }: { cue: HotkeyTargetCue; palette: ReturnType
       <span data-testid="hotkey-target-dot" aria-hidden="true"
         style={{ width: 7, height: 7, borderRadius: "50%", background: dot, flex: "0 0 auto" }} />
       <span className="top-bar-target-label">{label}</span>
+      {eligibility.key === eligibilityKey && eligibility.value && <EligibilityTiles value={eligibility.value} palette={palette} />}
     </span>
   );
 }
@@ -105,7 +169,7 @@ export function TopBar(p: TopBarProps): JSX.Element {
         <SessionClock />
       </div>
       <div className="top-bar-target" style={{ display: "flex", alignItems: "center", justifyContent: "center", minWidth: 0, maxWidth: "100%" }}>
-        <TargetCue cue={cue} palette={palette} />
+        <TargetCue cue={cue} palette={palette} commands={p.commands} />
       </div>
       <div className="top-bar-actions" style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, minWidth: 0 }}>
         <Button onClick={p.onAddPanel}>+ Add panel</Button>

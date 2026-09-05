@@ -486,6 +486,7 @@ func boot(ctx context.Context, onListening func(addr string)) (code int, restart
 		OutBuf: cfg.UIHub.OutboundQueue, DistDir: cfg.UIHub.DistDir,
 		Demo:          *demo,
 		AccountDemand: demands,
+		Eligibility:   venueEligibilityRegistry(vbs),
 	}, execCore, st, core, venueAdm, venueProbe, restartInPlace, startDemo, locateProviders)
 	hubDone := make(chan struct{})
 	go func() { defer close(hubDone); _ = hub.Run(ctx) }()

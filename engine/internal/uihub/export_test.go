@@ -36,6 +36,14 @@ func NewQueriesForTest(f fillsQuerier, clk clock.Clock, registries ...LocateRegi
 	return q
 }
 
+// NewVenueEligibilityQueriesForTest exposes the shared venue eligibility query
+// seam to external tests without coupling it to the locate registry.
+func NewVenueEligibilityQueriesForTest(f fillsQuerier, clk clock.Clock, registry EligibilityRegistry) queryHandler {
+	q := newQueries(f, clk)
+	q.eligibility = registry
+	return q
+}
+
 // SpaHandlerForTest exposes spaHandler to external test packages so they can
 // verify the generalized fs.FS-backed SPA fallback directly (e.g. over an
 // in-memory testing/fstest.MapFS), independent of ServerConfig.DistDir.

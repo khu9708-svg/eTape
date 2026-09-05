@@ -1010,6 +1010,7 @@ export function AppShell({ workspaceName, stores, scheduler, workspaceStore, lin
             onOpenSettings={() => setSettings({ open: true, section: "general" })}
             onOpenConnection={onOpenConnection}
             onOpenPractice={() => setPracticeOpen(true)}
+            commands={commands}
             targetCue={targetCueFor(hotkeyTarget)}
           />
           {addOpen && (

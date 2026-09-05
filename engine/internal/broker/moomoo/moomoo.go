@@ -28,6 +28,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/earlisreal/eTape/engine/internal/clock"
+	"github.com/earlisreal/eTape/engine/internal/eligibility"
 	"github.com/earlisreal/eTape/engine/internal/exec"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend"
 	"github.com/earlisreal/eTape/engine/internal/feed/opend/pb/trdcommon"
@@ -91,6 +92,7 @@ type Adapter struct {
 }
 
 var _ exec.Broker = (*Adapter)(nil)
+var _ eligibility.Provider = (*Adapter)(nil)
 
 // New builds a moomoo Adapter. It builds the second opend.Client (ClientID
 // "etape-trade") but does NOT start it -- Run(ctx) does, mirroring how
@@ -228,6 +230,10 @@ func (a *Adapter) now() int64 { return a.clk.Now().UnixMilli() }
 func (a *Adapter) emit(e exec.BrokerEvent) { a.events <- e }
 
 func (a *Adapter) Events() <-chan exec.BrokerEvent { return a.events }
+
+func (a *Adapter) VenueInstrumentEligibility(ctx context.Context, symbol string) (eligibility.Eligibility, bool, error) {
+	return a.tc.getMarginRatio(ctx, symbol)
+}
 
 // Capabilities reports moomoo's native replace and overnight (OVERNIGHT
 // session) support, but no native flatten-all (FlattenAll false: moomoo has no

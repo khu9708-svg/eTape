@@ -3,7 +3,9 @@ package uihub
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/earlisreal/eTape/engine/internal/clock"
@@ -30,6 +32,28 @@ type queries struct {
 	}
 	clk     clock.Clock
 	locates LocateRegistry
+
+	eligibility         EligibilityRegistry
+	eligibilityMu       sync.Mutex
+	eligibilityCache    map[venueEligibilityKey]venueEligibilityCacheEntry
+	eligibilityInflight map[venueEligibilityKey]*venueEligibilityCall
+}
+
+const venueEligibilityTTL = time.Minute
+
+type venueEligibilityKey struct {
+	venue  exec.VenueID
+	symbol string
+}
+
+type venueEligibilityCacheEntry struct {
+	value     wsmsg.VenueInstrumentEligibility
+	expiresAt time.Time
+}
+
+type venueEligibilityCall struct {
+	done  chan struct{}
+	value wsmsg.VenueInstrumentEligibility
 }
 
 func newQueries(f fillsQuerier, clk clock.Clock, charts ...interface {
@@ -54,16 +78,16 @@ func (q *queries) handle(name string, args json.RawMessage) any {
 }
 
 func (q *queries) handleAsync(ctx context.Context, name string, args json.RawMessage, reply func(any)) bool {
-	if !isLocateQuery(name) {
+	if !isAsyncQuery(name) {
 		return false
 	}
 	go func() { reply(q.handleContext(ctx, name, args)) }()
 	return true
 }
 
-func isLocateQuery(name string) bool {
+func isAsyncQuery(name string) bool {
 	switch name {
-	case "QueryLocateEligibility", "QueryLocateQuotes", "QueryLocates", "QueryLocate":
+	case "QueryVenueInstrumentEligibility", "QueryLocateEligibility", "QueryLocateQuotes", "QueryLocates", "QueryLocate":
 		return true
 	default:
 		return false
@@ -133,6 +157,12 @@ func (q *queries) handleContext(ctx context.Context, name string, args json.RawM
 			return wsmsg.ExportFillsResult{}
 		}
 		return wsmsg.ExportFillsResult{CSV: csvStr, Count: len(rows)}
+	case "QueryVenueInstrumentEligibility":
+		var a wsmsg.QueryVenueInstrumentEligibilityArgs
+		if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.Venue) == "" || strings.TrimSpace(a.Symbol) == "" {
+			return wsmsg.VenueInstrumentEligibility{Error: "bad args"}
+		}
+		return q.queryVenueInstrumentEligibility(ctx, a.Venue, a.Symbol)
 	case "QueryLocateEligibility":
 		var a wsmsg.QueryLocateEligibilityArgs
 		if err := json.Unmarshal(args, &a); err != nil || a.Venue == "" || strings.TrimSpace(a.Symbol) == "" {
@@ -142,8 +172,14 @@ func (q *queries) handleContext(ctx context.Context, name string, args json.RawM
 		if !ok {
 			return wsmsg.LocateEligibility{Error: "locate unsupported for selected venue"}
 		}
-		eligibility, found := provider.LocateEligibility(a.Symbol)
-		return locateEligibilityToWire(true, found, eligibility, "")
+		eligibilityProvider, ok := provider.(interface {
+			LocateEligibility(string) (locates.Eligibility, bool)
+		})
+		if !ok {
+			return wsmsg.LocateEligibility{Error: "locate eligibility unsupported for selected venue"}
+		}
+		assetEligibility, found := eligibilityProvider.LocateEligibility(a.Symbol)
+		return locateEligibilityToWire(true, found, assetEligibility, "")
 	case "QueryLocateQuotes":
 		var a wsmsg.QueryLocateQuotesArgs
 		if err := json.Unmarshal(args, &a); err != nil || a.Venue == "" || len(a.Symbols) == 0 {
@@ -200,6 +236,69 @@ func (q *queries) provider(venue string) (locates.Provider, bool) {
 	}
 	provider, ok := q.locates.ProviderFor(exec.VenueID(venue))
 	return provider, ok && provider != nil
+}
+
+func canonicalEligibilitySymbol(symbol string) string {
+	return strings.ToUpper(strings.TrimSpace(symbol))
+}
+
+func (q *queries) queryVenueInstrumentEligibility(ctx context.Context, venue, symbol string) wsmsg.VenueInstrumentEligibility {
+	key := venueEligibilityKey{venue: exec.VenueID(venue), symbol: canonicalEligibilitySymbol(symbol)}
+	now := q.clk.Now()
+	q.eligibilityMu.Lock()
+	if entry, ok := q.eligibilityCache[key]; ok && now.Before(entry.expiresAt) {
+		q.eligibilityMu.Unlock()
+		return entry.value
+	}
+	if call, ok := q.eligibilityInflight[key]; ok {
+		q.eligibilityMu.Unlock()
+		select {
+		case <-call.done:
+			return call.value
+		case <-ctx.Done():
+			return wsmsg.VenueInstrumentEligibility{Error: ctx.Err().Error()}
+		}
+	}
+	if q.eligibilityCache == nil {
+		q.eligibilityCache = map[venueEligibilityKey]venueEligibilityCacheEntry{}
+	}
+	if q.eligibilityInflight == nil {
+		q.eligibilityInflight = map[venueEligibilityKey]*venueEligibilityCall{}
+	}
+	call := &venueEligibilityCall{done: make(chan struct{})}
+	q.eligibilityInflight[key] = call
+	q.eligibilityMu.Unlock()
+
+	value := q.fetchVenueInstrumentEligibility(ctx, key)
+	fetchedAt := q.clk.Now()
+	q.eligibilityMu.Lock()
+	delete(q.eligibilityInflight, key)
+	call.value = value
+	if value.Error == "" {
+		q.eligibilityCache[key] = venueEligibilityCacheEntry{value: value, expiresAt: fetchedAt.Add(venueEligibilityTTL)}
+	}
+	close(call.done)
+	q.eligibilityMu.Unlock()
+	return value
+}
+
+func (q *queries) fetchVenueInstrumentEligibility(ctx context.Context, key venueEligibilityKey) wsmsg.VenueInstrumentEligibility {
+	if q.eligibility == nil {
+		return wsmsg.VenueInstrumentEligibility{Error: "venue instrument eligibility unsupported for selected venue"}
+	}
+	provider, ok := q.eligibility.ProviderFor(key.venue)
+	if !ok || provider == nil {
+		return wsmsg.VenueInstrumentEligibility{Error: "venue instrument eligibility unsupported for selected venue"}
+	}
+	value, found, err := provider.VenueInstrumentEligibility(ctx, key.symbol)
+	if err != nil {
+		slog.Warn("venue instrument eligibility lookup failed", "venue", key.venue, "symbol", key.symbol, "err", err)
+		return wsmsg.VenueInstrumentEligibility{Supported: true, Error: err.Error()}
+	}
+	return wsmsg.VenueInstrumentEligibility{
+		Supported: true, Found: found,
+		Shortable: value.Shortable, Marginable: value.Marginable, Tradable: value.Tradable,
+	}
 }
 
 func locateEligibilityToWire(supported, found bool, e locates.Eligibility, errText string) wsmsg.LocateEligibility {

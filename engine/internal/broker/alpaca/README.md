@@ -5,15 +5,16 @@ venue-scoped keys and normalized orders; outputs: normalized lifecycle/account
 data. Keep paper/live endpoints separate; history may reuse paper credentials
 only.
 
-The adapter also exposes a narrow read-only `AssetStatus` capability for Stock
-Info and locate eligibility. During engine startup, every configured Alpaca
-adapter loads the active directory with `GET /v2/assets?status=active` and
-stores the returned `borrow_status`, `shortable`, `marginable`, and `tradable`
-metadata in memory. Stock Info and `LocateEligibility` lookups are pure map
-reads and do not make per-symbol REST requests; each snapshot is treated as
-session-static until the next restart. This is informational only: it is not
-real-time borrow availability, and hard-to-borrow support still requires the
-explicit locate quote/reservation workflow.
+The adapter exposes the narrow read-only `AssetStatus` capability for Stock
+Info and the shared `VenueInstrumentEligibility` capability for the Top Bar.
+During engine startup, every configured Alpaca adapter loads the active
+directory with `GET /v2/assets?status=active` and stores the returned
+`borrow_status`, `shortable`, `marginable`, and `tradable` metadata in memory.
+Stock Info, venue instrument eligibility, and the locate workflow's borrow
+lookup are pure map reads and do not make per-symbol REST requests; each
+snapshot is treated as session-static until the next restart. The generic
+capability excludes borrow status and remains informational only: it is not
+real-time borrow availability, account authorization, or order approval.
 
 `*Adapter` also implements the optional `locates.Provider` capability. Quote,
 create, list, and get requests use `/v1/locates*`, retain decimal fee strings,
