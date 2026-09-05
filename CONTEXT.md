@@ -36,6 +36,20 @@ _Avoid_: Panel group, tab group
 A configured broker account and environment (paper or live) that receives an order. A Link Group owns its selected Execution Venue; there is no global venue fallback, and existing orders remain owned by the venue selected when they were submitted.
 _Avoid_: Active venue, global broker
 
+## Positions
+
+**Open Position**:
+A non-flat position in one symbol held at one Execution Venue.
+_Avoid_: Holding, open trade
+
+**Average Entry Price**:
+The quantity-weighted cost basis of an Open Position at its Execution Venue. It survives a partial exit and resets when the position reverses direction.
+_Avoid_: Avg price, average fill price, market average
+
+**Average-Entry Row**:
+A real DOM Ladder price row whose price equals the valid Average Entry Price of the Open Position at the Ladder's Link Group Execution Venue. It is a display-only position cue, never a LULD Boundary Row.
+_Avoid_: Cost-basis marker, entry line
+
 **Day P&L**:
 The account-wide close-to-close profit or loss for the current trading cycle. Alpaca reports it; eTape calculates it for Moomoo from account equity, the persisted prior-close baseline, and signed cash flows. Paper accounts are excluded from Max Day Loss.
 _Avoid_: Gross P&L, realized P&L
@@ -160,6 +174,10 @@ _Avoid_: Scrolled-back mode, detached mode
 **Reset Chart View**:
 The explicit action that restores the default time scale, re-enables price autoscaling, and returns the newest displayed bar to view.
 _Avoid_: Jump to live, reset zoom
+
+**Volume Indicator**:
+The single, default Chart Indicator that displays each bar's traded share volume. Its compact Chart Panel legend label is `Vol`; other surfaces use `Volume`.
+_Avoid_: Built-in Vol, Volume overlay
 
 **No-Trade Bar**:
 A completed 10-second interval with no statistically eligible price or volume activity, displayed as a flat candle at the previous close with zero volume. A delayed eligible bar replaces it in place.
