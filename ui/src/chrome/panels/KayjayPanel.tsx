@@ -1,6 +1,87 @@
 import { useEffect, useState } from "react";
 import { useTheme } from "../ThemeProvider";
 import type { PanelProps } from "./registry";
+import {
+  detectWallets,
+  connect as walletConnect,
+  disconnect as walletDisconnect,
+  reconnect as walletReconnect,
+  subscribe as walletSubscribe,
+  INITIAL_WALLET_STATE,
+  type WalletConnectionState,
+  type WalletKind,
+} from "./walletConnect";
+
+type JinxWallet = {
+  error?: string;
+  signer?: { address?: string | null; role?: string; balanceSol?: number | null; splTokens?: unknown[] };
+  owner?: {
+    configured?: boolean;
+    address?: string | null;
+    sol?: number | null;
+    splTokens?: { mint?: string; uiAmount?: number }[];
+    recentTransfers?: { signature?: string; direction?: string; sol?: number }[];
+    note?: string;
+  };
+};
+
+// Wallet panel: Phantom owner wallet (connect/approve here) + JINX execution
+// signer + funding destination, kept visually distinct. JINX autonomous
+// execution never uses Phantom — it signs with the D5f local keypair server-side.
+function WalletPanel(): JSX.Element {
+  const [jinx, setJinx] = useState<JinxWallet | null>(null);
+  const [wallet, setWallet] = useState<WalletConnectionState>(INITIAL_WALLET_STATE);
+  const [available, setAvailable] = useState<WalletKind[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    fetch("/kayjay/wallet").then((r) => r.json()).then(setJinx).catch(() => setJinx({ error: "unavailable" }));
+    setAvailable(detectWallets().map((d) => d.kind));
+  }, []);
+
+  const expectedOwner = jinx?.owner?.configured ? jinx.owner.address ?? null : null;
+
+  useEffect(() => {
+    if (!available.length) return;
+    void walletReconnect(available[0], expectedOwner).then((s) => { if (s.phase !== "disconnected") setWallet(s); });
+    return walletSubscribe(available[0], expectedOwner, setWallet);
+  }, [available, expectedOwner]);
+
+  async function doConnect(kind: WalletKind) {
+    setBusy(true);
+    try { setWallet(await walletConnect(kind, expectedOwner)); } finally { setBusy(false); }
+  }
+
+  return <details open><summary>Wallet · Phantom owner {wallet.phase === "owner_verified" ? "· verified" : wallet.phase === "owner_mismatch" ? "· MISMATCH" : wallet.address ? "· connected" : "· not connected"}</summary>
+
+    <h4>Phantom owner wallet</h4>
+    {available.length === 0 && <p role="alert">No Phantom / Backpack wallet detected in this browser. Install Phantom to connect the owner wallet.</p>}
+    {available.map((k) => (
+      <button key={k} disabled={busy} onClick={() => void doConnect(k)}>{wallet.address && wallet.kind === k ? `Reconnect ${k}` : `Connect ${k}`}</button>
+    ))}
+    {wallet.address && <button style={{ marginLeft: 8 }} onClick={() => { void walletDisconnect(wallet.kind!); setWallet(INITIAL_WALLET_STATE); }}>Disconnect</button>}
+    {wallet.error && <p role="alert">{wallet.error}</p>}
+    {wallet.address && <>
+      <p>Connected address: <code>{wallet.address}</code></p>
+      <p>Connection: {wallet.phase.replace("_", " ")}{wallet.lastResponseAt ? ` · last response ${new Date(wallet.lastResponseAt).toLocaleTimeString()}` : ""}</p>
+      {expectedOwner && wallet.phase === "owner_mismatch" && <p role="alert">Connected wallet does not match the configured JINX owner wallet ({expectedOwner}). Owner-approved signing is blocked.</p>}
+      {wallet.phase === "owner_verified" && <p>✓ Matches the configured JINX owner wallet.</p>}
+    </>}
+
+    <h4>On-chain owner wallet state {jinx?.owner?.configured ? "" : "· not configured"}</h4>
+    {jinx?.error && <p role="alert">JINX worker wallet endpoint unavailable — owner wallet state is unknown, not empty.</p>}
+    {jinx?.owner?.configured && <>
+      <p>Address: <code>{jinx.owner.address}</code> · SOL: {jinx.owner.sol ?? "Unavailable"}</p>
+      <p>SPL tokens: {(jinx.owner.splTokens ?? []).length === 0 ? "none" : (jinx.owner.splTokens ?? []).map((t) => `${t.mint?.slice(0, 6)}…: ${t.uiAmount}`).join(" · ")}</p>
+      <p>Recent transfers: {(jinx.owner.recentTransfers ?? []).length === 0 ? "none" : (jinx.owner.recentTransfers ?? []).slice(0, 5).map((t) => `${t.direction} ${t.sol}`).join(" · ")}</p>
+    </>}
+    {jinx && !jinx.owner?.configured && !jinx.error && <p>Set <code>JINX_OWNER_WALLET_ADDRESS</code> to the Phantom owner address to show its balance/SPL/activity here.</p>}
+
+    <h4>JINX execution signer (autonomous — never Phantom)</h4>
+    {jinx?.signer && <p>Address: <code>{jinx.signer.address}</code> · role: {jinx.signer.role} · SOL: {jinx.signer.balanceSol ?? "Unavailable"} · SPL: {(jinx.signer.splTokens ?? []).length}</p>}
+    <p style={{ opacity: 0.75 }}>Funding destination for owner deposits: the execution signer address above. Withdrawals return to the Phantom owner wallet.</p>
+  </details>;
+}
 
 type Service = { name: string; state: string; ms: number | null; authenticated?:boolean|null; ready?:boolean|null; lastSuccess?:string|null; data: Record<string, unknown> | null };
 type Snapshot = { updatedAt: string; services: Service[]; raptor: {state: string; text: string; updatedAt: string | null} };
@@ -368,6 +449,7 @@ export function KayjayPanel({config}: PanelProps): JSX.Element {
     </>}
     {tab==="Settings" && <p>Use Settings in the top bar for the existing eTape settings. Engine authority is controlled in its own system view.</p>}
     {tab==="Accounts" && <>
+      <WalletPanel/>
       <SandboxPayments/>
       <CashoutRails/>
       <CoinbaseTrading/>

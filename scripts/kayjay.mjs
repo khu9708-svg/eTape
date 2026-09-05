@@ -265,6 +265,13 @@ export function createCockpitServer() {
         return res.end(JSON.stringify(await paymentAction(JSON.parse(body))));
       }catch(error){res.writeHead(error instanceof PaymentError?error.status:400);return res.end(JSON.stringify({error:error instanceof PaymentError?error.message:"Payment request failed.",code:error instanceof PaymentError?error.code:"invalid_request"}));}
     }
+    if(req.method==="GET"&&req.url.startsWith("/kayjay/wallet")){
+      res.setHeader("Cache-Control","no-store");res.setHeader("Content-Type","application/json");
+      try{
+        const r=await fetch("http://127.0.0.1:8794/wallet",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({limit:20}),signal:AbortSignal.timeout(9000)});
+        return res.end(JSON.stringify(await r.json()));
+      }catch{res.writeHead(502);return res.end(JSON.stringify({error:"JINX worker wallet endpoint unavailable. Connection state is unknown; this is not an empty wallet."}));}
+    }
     if(req.method==="POST"&&req.url==="/kayjay/trade"){
       res.setHeader("Cache-Control","no-store");res.setHeader("Content-Type","application/json");
       if(req.headers.origin!==origin||!req.headers["content-type"]?.startsWith("application/json")){res.writeHead(403);return res.end();}
