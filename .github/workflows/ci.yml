@@ -87,6 +87,9 @@ jobs:
         working-directory: ui
         run: npm ci
 
+      - name: KAYJAY adapter boundary tests
+        run: node --test scripts/kayjay.test.mjs
+
       - name: Lint
         working-directory: ui
         run: npm run lint

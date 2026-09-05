@@ -13,7 +13,7 @@ import { HotkeyTargetCoordinator, type HotkeyTargetChannel, type HotkeyTargetInp
 import type { DemandRegistry } from "../wire/DemandRegistry";
 import type { ConnState } from "../wire/WsClient";
 import { PANELS, dockviewPanelConstraints, type PanelProps } from "./panels/registry";
-import { buildMonitoringWorkspace, PRESETS } from "./presets";
+import { buildKayjayWorkspace, buildMonitoringWorkspace, PRESETS } from "./presets";
 import { TopBar, targetCueFor } from "./TopBar";
 import { FeedStatusBanner } from "./FeedStatusBanner";
 import { BootStatusBanner } from "./BootStatusBanner";
@@ -221,7 +221,7 @@ export function AppShell({ workspaceName, stores, scheduler, workspaceStore, lin
     setWs(null);
     setSourceWorkspace(null);
     if (workspaceName === MONITORING_WORKSPACE_ID) observeScannerSync(undefined);
-    void workspaceStore.load(workspaceName, workspaceName === MONITORING_WORKSPACE_ID ? buildMonitoringWorkspace() : undefined).then((w) => {
+    void workspaceStore.load(workspaceName, workspaceName === MONITORING_WORKSPACE_ID ? buildMonitoringWorkspace() : workspaceName === "kayjay" ? buildKayjayWorkspace() : undefined).then((w) => {
       if (!alive) return;
       // Hydrate LinkGroups' per-group focused symbol BEFORE setWs: panels read
       // linkGroups.symbolFor(group) on their very first mount, and mounting

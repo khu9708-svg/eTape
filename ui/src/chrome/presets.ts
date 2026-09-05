@@ -236,3 +236,14 @@ export const PRESETS: Preset[] = [
     }),
   },
 ];
+
+export function buildKayjayWorkspace(): Workspace {
+  const preset = PRESETS.find(p => p.id === "trading")!.build();
+  const layout = structuredClone(preset.layout);
+  layout.panels["t-chart-10s"].title = "KAYJAY";
+  return {
+    name: "kayjay", layoutVersion: WORKSPACE_LAYOUT_VERSION,
+    panels: preset.panels.map(p => p.id === "t-chart-10s" ? { ...p, panelId: "kayjay", group: null, settings: {} } : p),
+    layout,
+  };
+}

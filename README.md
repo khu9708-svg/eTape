@@ -466,3 +466,38 @@ specifications in `docs/specs/`.
 ## License
 
 [MIT](LICENSE) — free to use, modify, and distribute.
+
+## KAYJAY workstation integration (Windows)
+
+From the approved parent folder, run `.\KAYJAY.ps1`. The tracked launcher is
+`eTape/KAYJAY.ps1`; copy it to the parent folder after updating this clone.
+Use `-Check` to report listeners and `-NoOpen` to start without opening a window.
+
+The official v0.8.0 Windows release in ignored `dist/etape.exe` runs in demo mode
+on 8686. Build this source UI with `cd ui; npm ci; npm run build`.
+The thin adapter `scripts/kayjay.mjs` serves that UI on loopback 8687 and relays
+its WebSocket to eTape. The KAYJAY workspace reuses the upstream Trading layout,
+replacing one chart pane with the KAYJAY service panel.
+
+The adapter reads Bluelights health (8787), JINX worker status (8794), ATLAS mode,
+broker readiness, positions and orders (8080), Chrome/CDP health (9222), and the
+existing Robinhood gateway (8765). The ATLAS tab embeds its existing UI directly:
+preview, approval, fingerprint validation and OFF/MANUAL/AUTO stay in ATLAS.
+The existing RAPTOR15 `python -m raptor15.cli live BTC ETH` reader runs once per
+minute without an order path. Unavailable sources are reported as unavailable,
+never as zero positions or zero P&L.
+
+The launcher imports the existing Bluelights credential loader, starts its
+existing launcher if needed, and starts the existing Robinhood gateway. Disabled
+JINX/ATLAS tasks remain disabled. No engine source files are changed.
+Robinhood login and execution wiring remain incomplete; a listening gateway
+does not imply an authenticated brokerage connection.
+
+eTape execution is practice-only here. Live/unknown sessions, mode-switching
+commands and unrecognized mutations are denied at the adapter. Real execution
+belongs to the embedded existing ATLAS UI and its gates; JINX execution and
+Robinhood execution are not connected by this change.
+
+Checks: `node --test scripts/kayjay.test.mjs`, UI lint/typecheck/build/tests,
+and `node scripts/kayjay-smoke.mjs` against the running workstation (installed
+Chrome required). The smoke test writes an ignored screenshot to `dist/kayjay.png`.
