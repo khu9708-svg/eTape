@@ -563,3 +563,4 @@ multi-engine EXIT ALL are not implemented by this account-state change.
 Existing Coinbase/Spritz authorization and unavailable execution authorities
 must not be represented as working payment/exit buttons. No payout or trade
 was executed during this change.
+ATLAS account responses are excluded unless its canonical mode endpoint confirms a registered live broker, because its account_broker otherwise falls back to simulation. JINX data is journal-sourced. Whole-account coverage remains incomplete even when these individual reads succeed.

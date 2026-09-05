@@ -97,3 +97,9 @@ test("Coinbase read JWT binds host, path, expiry and verifiable P-256 signature"
 test("Coinbase account adapter rejects order placement resources",async()=>{
  await assert.rejects(()=>readCoinbase("/orders",{name:"test",secret:"invalid"}));
 });
+
+import {requireLiveAccount} from "./kayjay-state.mjs";
+test("ATLAS simulated account fallback is excluded without live broker registration",()=>{
+ assert.equal(requireLiveAccount({state:"CONNECTED",data:{positions:[]}},false).data,null);
+ assert.equal(requireLiveAccount({state:"CONNECTED",data:{positions:[]}},true).state,"CONNECTED");
+});

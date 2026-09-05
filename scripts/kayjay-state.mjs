@@ -13,3 +13,8 @@ export function sourceData(name,response){
  return {engine:name,available:response.state==="CONNECTED"&&response.data!=null&&!response.data.error,
   state:response.state,lastSuccess:response.lastSuccess??null,data:response.data};
 }
+
+export function requireLiveAccount(response,registered){
+ if(response.state==="CONNECTED"&&registered!==true)return {...response,state:"UNVERIFIED",data:null,reason:"Live broker not registered; simulated fallback excluded"};
+ return response;
+}

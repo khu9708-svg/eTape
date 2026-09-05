@@ -1,5 +1,5 @@
 import {coinbaseSnapshot,coinbaseCurrent} from "./kayjay-coinbase.mjs";
-import {connectionState,sourceData} from "./kayjay-state.mjs";
+import {connectionState,sourceData,requireLiveAccount} from "./kayjay-state.mjs";
 import {discover,tokenCandles} from "./kayjay-discovery.mjs";
 import {marketSnapshot} from "./kayjay-market.mjs";
 import http from "node:http";
@@ -148,10 +148,12 @@ export function createCockpitServer() {
         probe("JINX positions","http://127.0.0.1:8794/positions"),
         probe("JINX P&L","http://127.0.0.1:8794/pnl"),
         probe("ATLAS positions","http://127.0.0.1:8080/api/positions"),
-        probe("ATLAS orders","http://127.0.0.1:8080/api/orders/open")
+        probe("ATLAS orders","http://127.0.0.1:8080/api/orders/open"),
+        probe("ATLAS account authority","http://127.0.0.1:8080/api/execution-mode")
       ]);
       res.setHeader("Content-Type","application/json");
-      return res.end(JSON.stringify({asOf:new Date().toISOString(),complete:reads.every(r=>r.state==="CONNECTED"),sources:reads.map(r=>sourceData(r.name,r))}));
+      const authority=reads.pop();const sources=reads.map(r=>sourceData(r.name,r.name.startsWith("ATLAS")?requireLiveAccount(r,authority.state==="CONNECTED"&&authority.data?.live_broker?.registered):r));
+      return res.end(JSON.stringify({asOf:new Date().toISOString(),complete:false,responsesComplete:sources.every(s=>s.available),coverage:"JINX journal and ATLAS live-account reads; not all venues",sources}));
     }
     if (url.pathname === "/kayjay/status") {
       const services = await Promise.all([
