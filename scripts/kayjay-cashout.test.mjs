@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { discoverCashoutRails, selectCashoutRail, planCashout, createFiatWithdrawal, createOfframpSession, CashoutError } from './kayjay-cashout.mjs';
+import { discoverCashoutRails, selectCashoutRail, planCashout, createFiatWithdrawal, createOfframpSession, offrampOrderStatus, railExecutionSupport, CashoutError } from './kayjay-cashout.mjs';
 
 const creds = () => ({ name: 'test', secret: generateKeyPairSync('ed25519').privateKey.export({ format: 'der', type: 'pkcs8' }).subarray(-32).toString('base64') });
 const ok = body => ({ ok: true, status: 200, json: async () => body });
@@ -59,13 +59,35 @@ test('createFiatWithdrawal refuses without owner confirmation and is idempotent 
   assert.equal(calls, 1);
 });
 
-test('createOfframpSession needs owner confirm and returns an official hosted URL', async () => {
+test('createOfframpSession hits the CDP host, needs owner confirm, returns an official hosted URL', async () => {
   await assert.rejects(createOfframpSession({ amount: '10', address: 'abc' }, creds(), async () => ok({})), (e) => e.code === 'owner_confirmation_required');
-  const send = async () => ok({ token: 'sess-abc' });
+  let calledUrl;
+  const send = async (url) => { calledUrl = url; return ok({ token: 'sess-abc' }); };
   const s = await createOfframpSession({ amount: '10', asset: 'USDC', network: 'solana', address: 'BSB3iG3E8Lmt6Q59cLqYmZUCgM9FKuc39pgXd5rUcF17', owner: true, confirm: true }, creds(), send);
+  assert.equal(calledUrl, 'https://api.cdp.coinbase.com/onramp/v1/token');
   assert.ok(s.hostedUrl.startsWith('https://pay.coinbase.com/v3/sell/input?'));
   assert.match(s.hostedUrl, /sessionToken=sess-abc/);
   assert.equal(s.ownerActionRequired, 'OWNER LIVE VERIFY REQUIRED');
+});
+
+test('railExecutionSupport classifies every rail explicitly', async () => {
+  const send = async () => ok({ payment_methods: [{ id: 'pm-card', type: 'WORLDPAY_CARD', currency: 'USD', verified: true, allow_withdraw: true }] });
+  const state = await discoverCashoutRails(creds(), send);
+  const sup = railExecutionSupport(state);
+  assert.equal(sup.instantCard.support, 'EXECUTABLE');
+  assert.equal(sup.instantCard.via, 'POST /v2/accounts/{id}/withdrawals');
+  assert.equal(sup.rtp.support, 'UNAVAILABLE_ON_ACCOUNT');
+  assert.equal(sup.paypal.support, 'UNAVAILABLE_ON_ACCOUNT');
+  assert.equal(sup.cdpOfframp.support, 'EXECUTABLE');
+});
+
+test('offrampOrderStatus reads the CDP sell transactions for a partner user id', async () => {
+  let calledUrl;
+  const send = async (url) => { calledUrl = url; return ok({ transactions: [{ transaction_id: 't1', status: 'ONRAMP_TRANSACTION_STATUS_SUCCESS', sell_amount: { value: '10', currency: 'USD' } }] }); };
+  const r = await offrampOrderStatus({ partnerUserId: 'sandbox-owner-1' }, creds(), send);
+  assert.match(calledUrl, /api\.cdp\.coinbase\.com\/onramp\/v1\/sell\/user\/sandbox-owner-1\/transactions/);
+  assert.equal(r.count, 1);
+  assert.equal(r.latest.id, 't1');
 });
 
 test('no instant rail and instantOnly fails clearly with no ACH fallback', async () => {

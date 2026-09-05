@@ -1,6 +1,6 @@
 import {coinbaseSnapshot,coinbaseCurrent,coinbaseJwt,coinbaseCredentials} from "./kayjay-coinbase.mjs";
 import {createPaymentAdapter,createFileIntentStore,PaymentError} from "./kayjay-payments.mjs";
-import {discoverCashoutRails,selectCashoutRail,planCashout,createFiatWithdrawal,createOfframpSession,fiatWithdrawalStatus,CashoutError} from "./kayjay-cashout.mjs";
+import {discoverCashoutRails,selectCashoutRail,planCashout,createFiatWithdrawal,createOfframpSession,fiatWithdrawalStatus,offrampOrderStatus,railExecutionSupport,CashoutError} from "./kayjay-cashout.mjs";
 import {createCoinbaseTrader,TradeError} from "./kayjay-coinbase-trade.mjs";
 import {readFileSync,writeFileSync} from "node:fs";
 import {homedir} from "node:os";
@@ -150,6 +150,8 @@ export async function paymentAction(request,adapter=paymentAdapter()){
    // OWNER LIVE VERIFY REQUIRED — starts a Coinbase hosted sell flow.
    return createOfframpSession({...input,owner:request.owner,confirm:request.confirm});
   case "cashout_status":return fiatWithdrawalStatus(input);
+  case "cashout_offramp_status":return offrampOrderStatus(input);
+  case "cashout_execution_support":return railExecutionSupport(await discoverCashoutRails());
   default:throw new PaymentError("unsupported_action","Unsupported payment action.");
  }
 }

@@ -138,17 +138,19 @@ export function selectCashoutRail(state, { instantOnly = true } = {}) {
 // --------------------------------------------------------------------------- //
 
 const V2 = "https://api.coinbase.com";
+const CDP = "https://api.cdp.coinbase.com";
+const CDP_HOST = "api.cdp.coinbase.com";
 const AMOUNT = /^\d{1,10}(\.\d{1,8})?$/;
 const CLIENT = /^[a-zA-Z0-9_-]{6,64}$/;
 
-async function v2(method, resource, credentials, send, body) {
+async function v2(method, resource, credentials, send, body, { base = V2, host = HOST } = {}) {
   let jwt;
-  try { jwt = coinbaseJwt(method, resource, credentials, undefined, HOST); }
+  try { jwt = coinbaseJwt(method, resource, credentials, undefined, host); }
   catch { fail("coinbase_auth_required", "Coinbase credentials are UNSET or invalid.", 503); }
   const serialized = body === undefined ? undefined : JSON.stringify(body);
   let response;
   try {
-    response = await send(V2 + resource, {
+    response = await send(base + resource, {
       method, redirect: "error", signal: AbortSignal.timeout(12000),
       headers: { Authorization: "Bearer " + jwt, "Content-Type": "application/json", Accept: "application/json" },
       ...(serialized ? { body: serialized } : {}),
@@ -172,6 +174,7 @@ export async function planCashout({ amount, instantOnly = true }, credentials = 
   return {
     amount: String(amount), currency: "USD",
     selected: picked.selected, rail: picked.rail,
+    execution: railExecutionSupport(state),
     quote: picked.rail?.paymentMethodId
       ? { paymentMethodId: picked.rail.paymentMethodId, note: "Fee and delivery are returned by Coinbase at withdrawal-create time; no standalone preview endpoint for fiat payout rails." }
       : { note: "CDP Offramp uses a hosted sell session; the sell quote is shown in the hosted flow." },
@@ -231,9 +234,11 @@ export async function createOfframpSession({ amount, asset = "USDC", network = "
   if (!AMOUNT.test(String(amount ?? ""))) fail("invalid_amount", "A positive amount is required.");
   if (!["solana", "base", "ethereum"].includes(network)) fail("invalid_network", "Choose a supported network.");
   if (typeof address !== "string" || !address) fail("invalid_address", "The source wallet address is required.");
-  const token = await v2("POST", "/onramp/v1/token", { ...credentials }, send, {
-    addresses: [{ address, blockchains: [network] }], assets: [asset],
-  }).catch(e => { throw e; });
+  const token = await v2(
+    "POST", "/onramp/v1/token", credentials, send,
+    { addresses: [{ address, blockchains: [network] }], assets: [asset] },
+    { base: CDP, host: CDP_HOST },
+  );
   const sessionToken = token.token ?? token.data?.token;
   if (!sessionToken) fail("coinbase_invalid_response", "Coinbase did not return an Offramp session token.", 502);
   const url = new URL("https://pay.coinbase.com/v3/sell/input");
@@ -243,6 +248,57 @@ export async function createOfframpSession({ amount, asset = "USDC", network = "
   url.searchParams.set("defaultNetwork", network);
   url.searchParams.set("presetCryptoAmount", String(amount));
   if (redirectUrl) { try { const r = new URL(redirectUrl); if (r.protocol === "https:") url.searchParams.set("redirectUrl", r.toString()); } catch { /* ignore bad redirect */ } }
-  return { provider: "coinbase", flow: "cdp_offramp", hostedUrl: url.toString(), sessionCreated: true,
+  return { provider: "coinbase", flow: "cdp_offramp", hostedUrl: url.toString(), sessionCreated: true, sessionToken,
     ownerActionRequired: "OWNER LIVE VERIFY REQUIRED", note: "Open the hosted sell flow to review the quote and confirm the payout." };
+}
+
+/**
+ * Poll the CDP Offramp transaction status for a partner user id. The hosted
+ * flow's sell orders are reported here once the owner completes them.
+ */
+export async function offrampOrderStatus({ partnerUserId }, credentials = coinbaseCredentials(), send = fetch) {
+  if (typeof partnerUserId !== "string" || !partnerUserId) fail("invalid_id", "partnerUserId is required.");
+  const data = await v2(
+    "GET", `/onramp/v1/sell/user/${encodeURIComponent(partnerUserId)}/transactions`, credentials, send, undefined,
+    { base: CDP, host: CDP_HOST },
+  );
+  const txns = Array.isArray(data.transactions) ? data.transactions : [];
+  const latest = txns[0] ?? null;
+  return {
+    partnerUserId,
+    count: txns.length,
+    latestStatus: latest?.status ?? "none",
+    latest: latest
+      ? { id: latest.transaction_id ?? null, status: latest.status ?? null, sellAmount: latest.sell_amount ?? null, payoutMethod: latest.payout_method ?? null }
+      : null,
+  };
+}
+
+/**
+ * Explicit per-rail EXECUTION classification. Every rail is one of:
+ *   EXECUTABLE                     — a full discover->create->status->reconcile
+ *                                    path exists and a usable method is on file
+ *   UNAVAILABLE_ON_ACCOUNT         — the path exists but this Coinbase account
+ *                                    has no verified withdraw-enabled method
+ *   UNSUPPORTED BY CURRENT PROVIDER/API
+ *                                  — no official Coinbase API path exists
+ */
+export function railExecutionSupport(state) {
+  const r = state?.rails ?? {};
+  const fiat = (rail) =>
+    rail?.candidate === true
+      ? { support: "EXECUTABLE", via: "POST /v2/accounts/{id}/withdrawals", paymentMethodId: rail.paymentMethodId }
+      : rail
+        ? { support: "UNAVAILABLE_ON_ACCOUNT", reason: rail.reason }
+        : { support: "UNAVAILABLE_ON_ACCOUNT", reason: "rail not discovered" };
+  return {
+    instantCard: fiat(r.instantCard),
+    rtp: fiat(r.rtp),
+    paypal: fiat(r.paypal),
+    cdpOfframp: {
+      support: "EXECUTABLE",
+      via: "POST /onramp/v1/token -> pay.coinbase.com/v3/sell (hosted) -> GET /onramp/v1/sell/.../transactions",
+      note: "Hosted sell; the owner confirms the quote and payout in the Coinbase flow.",
+    },
+  };
 }
