@@ -9,7 +9,7 @@ try{
  await page.waitForTimeout(5000);
  await page.screenshot({path:path.join(root,"dist/kayjay.png"),fullPage:true});
  assert.equal(await page.locator(".kayjay-engine-cards article").count(),3);
- assert.equal(await page.locator(".kayjay-connections>div").count(),5);
+ assert.equal(await page.locator(".kayjay-connections>div").count(),6);
  await page.getByRole("button",{name:"Native chart",exact:true}).click();
  for(const symbol of ["ETH","SOL","BTC"]){await page.locator(".kayjay-coin").filter({has:page.getByAltText(symbol+" logo")}).click();await page.waitForFunction(s=>document.querySelector(".kayjay-market-toolbar strong")?.textContent.startsWith(s),symbol);}
  assert.equal(await page.locator(".kayjay-live-chart").isVisible(),true);
@@ -24,5 +24,5 @@ try{
  await page.setViewportSize({width:1366,height:768});await page.waitForTimeout(500);
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
  await page.screenshot({path:path.join(root,"dist/kayjay-1366.png"),fullPage:true});
- assert.deepEqual(errors,[]);console.log("PASS: black cockpit, three engine cards, five connectivity states, TradingView embed, native coin switching, live BONK search and token chart, responsive viewport; no page errors.");
+ assert.deepEqual(errors,[]);console.log("PASS: black cockpit, three engine cards, six connectivity states, TradingView embed, native coin switching, live BONK search and token chart, responsive viewport; no page errors.");
 }finally{await browser.close();}

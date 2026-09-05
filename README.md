@@ -540,3 +540,26 @@ has no mode authority connected here. Buttons disable when the authority is
 offline; unknown mode is never shown as OFF. No scheduled task is enabled,
 and no actual live mode transition was performed during development.
 JINX /activity is read for its existing discovery feed when available.
+
+### Runtime account-state integration
+
+Health now rejects HTTP-200 error payloads as degraded and retains the last
+successful response timestamp. Webull/OANDA use their existing readiness
+endpoints; authenticated proof is distinct from registration/readiness flags.
+Coinbase account authentication is distinct from its public chart feed.
+
+Existing Positions/Orders views read source-tagged JINX positions/P&L and
+ATLAS positions/orders through /kayjay/data. Unavailable sources remain
+unavailable; no global total is invented from incomplete account coverage.
+Coinbase read-only accounts, open-order page and fill page use the documented
+Advanced Trade API with short-lived P-256 signed JWTs. Environment names are
+COINBASE_API_KEY_NAME / COINBASE_API_PRIVATE_KEY (or CDP_API_KEY_ID /
+CDP_API_KEY_SECRET), loaded through the existing Bluelights credential loader.
+Never put values in this repository. Orders/fills are explicitly bounded pages.
+The account adapter rejects order-placement paths and does not bypass engines.
+
+Funding, instant debit payouts, shared stop/schedule authority, and reconciled
+multi-engine EXIT ALL are not implemented by this account-state change.
+Existing Coinbase/Spritz authorization and unavailable execution authorities
+must not be represented as working payment/exit buttons. No payout or trade
+was executed during this change.

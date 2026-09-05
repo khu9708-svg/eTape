@@ -9,7 +9,7 @@ export function pairView(p){
  const numeric=v=>v==null||v===""||!Number.isFinite(Number(v))?null:Number(v);
  return {chain:p.chainId,address:p.pairAddress,token:p.baseToken?.address,symbol:p.baseToken?.symbol||"Unknown",name:p.baseToken?.name||"Unknown",
  price:numeric(p.priceUsd),change:numeric(p.priceChange?.h24),liquidity:numeric(p.liquidity?.usd),volume:numeric(p.volume?.h24),
- created:p.pairCreatedAt||null};
+ marketCap:numeric(p.marketCap),created:p.pairCreatedAt||null};
 }
 export async function discover(query,feed){
  if(query.length>100||!["search","trending","latest"].includes(feed))throw new Error("Unsupported lookup");

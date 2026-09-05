@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useTheme } from "../ThemeProvider";
 import type { PanelProps } from "./registry";
 
-type Service = { name: string; state: string; ms: number | null; data: Record<string, unknown> | null };
+type Service = { name: string; state: string; ms: number | null; authenticated?:boolean|null; ready?:boolean|null; lastSuccess?:string|null; data: Record<string, unknown> | null };
 type Snapshot = { updatedAt: string; services: Service[]; raptor: {state: string; text: string; updatedAt: string | null} };
 
 export function KayjayPanel({config}: PanelProps): JSX.Element {
@@ -25,9 +25,12 @@ export function KayjayPanel({config}: PanelProps): JSX.Element {
     return () => { active = false; clearInterval(timer); };
   }, []);
   const [portfolio,setPortfolio]=useState<{asOf:string;accounts:{account:string;total:number|null;cash:number|null;crypto:number|null;currency:string;error?:string}[]}|null>(null);
+  const [coinbaseAccount,setCoinbaseAccount]=useState<Record<string,unknown>|null>(null);
   const [portfolioError,setPortfolioError]=useState(false);
   useEffect(()=>{
     if(tab!=="Accounts")return;
+    const controller=new AbortController();
+    void fetch("/kayjay/coinbase",{signal:controller.signal}).then(r=>r.json()).then(setCoinbaseAccount).catch(()=>setCoinbaseAccount({state:"UNAVAILABLE"}));
     let active=true;
     const poll=async()=>{try{
       const response=await fetch("/kayjay/portfolio",{signal:AbortSignal.timeout(35000)});
@@ -42,6 +45,9 @@ export function KayjayPanel({config}: PanelProps): JSX.Element {
     const navigate=(event:Event)=>{const name=(event as CustomEvent<string>).detail;setTab(config.settings["view"]==="nav"?name:name==="Dashboard"||name==="Markets"||name==="Meme Coins"?"Health":name==="Brokers"?"Accounts":name);};
     window.addEventListener("kayjay-section",navigate);return()=>window.removeEventListener("kayjay-section",navigate);
   },[]);
+  const [liveData,setLiveData]=useState<{complete:boolean;sources:{engine:string;available:boolean;state:string;data:unknown}[]}|null>(null);
+  const [liveDataError,setLiveDataError]=useState(false);
+  useEffect(()=>{if(!["Positions","Orders"].includes(tab))return;let active=true;const poll=async()=>{try{const response=await fetch("/kayjay/data",{signal:AbortSignal.timeout(8000)});if(!response.ok)throw new Error();const data=await response.json();if(active){setLiveData(data);setLiveDataError(false);}}catch{if(active)setLiveDataError(true);}};void poll();const timer=setInterval(()=>void poll(),10000);return()=>{active=false;clearInterval(timer);};},[tab]);
   const [modeResult,setModeResult]=useState("");
   const [modeBusy,setModeBusy]=useState(false);
   const changeMode=async(engine:string,mode:string)=>{
@@ -74,9 +80,9 @@ export function KayjayPanel({config}: PanelProps): JSX.Element {
           <div className="kayjay-modes" aria-label={name+" mode controls"}>{["OFF","MANUAL","AUTO"].map(m=><button key={m} disabled={scanner||error||modeBusy||service?.state!=="CONNECTED"||(name==="JINX"&&m==="OFF")} onClick={()=>void changeMode(name,m)} title={scanner?"Existing scanner is read only; no execution mode endpoint":service?.state==="CONNECTED"?"Use the engine control below":"Engine authority offline; no mode command can be verified"}>{m}</button>)}<button onClick={()=>setTab(name)}>Open {name}</button></div>
         </article>;
       })}</div>
-      <h3>Connections</h3><div className="kayjay-connections">{["Bluelights","Robinhood","Webull","OANDA","Kalshi"].map(name=>{
+      <h3>Connections</h3><div className="kayjay-connections">{["Bluelights","Robinhood","Webull","OANDA","Kalshi","Coinbase"].map(name=>{
        const service=snapshot.services.find(s=>s.name===name);const state=error?"STALE":service?.state??"UNVERIFIED";
-       return <div key={name}><span>{name}</span><b className={state==="CONNECTED"?"positive":"negative"}>{state}</b><small>{service?.ms!=null?service.ms+" ms":"Readiness unavailable"}</small></div>;
+       return <div key={name} title={"Authentication: "+(service?.authenticated===true?"verified":service?.authenticated===false?"failed":"unverified")+" | Readiness: "+(service?.ready===true?"ready":service?.ready===false?"not ready":"unverified")+" | Last successful check: "+(service?.lastSuccess??"none")}><span>{name}</span><b className={state==="CONNECTED"?"positive":"negative"}>{state}</b><small>{service?.ms!=null?service.ms+" ms":"Readiness unavailable"}</small></div>;
       })}</div>
       <div className="kayjay-position-summary"><button onClick={()=>setTab("Positions")}>Positions · {snapshot.services.find(s=>s.name==="Positions")?.state==="CONNECTED"?"View live":"Unavailable"}</button><button onClick={()=>setTab("Orders")}>Orders · {snapshot.services.find(s=>s.name==="Orders")?.state==="CONNECTED"?"View live":"Unavailable"}</button></div>
       <p className="kayjay-help">Execution controls remain with each engine. Offline is not the same as mode OFF. No global P&amp;L is inferred from practice balances.</p>
@@ -84,6 +90,7 @@ export function KayjayPanel({config}: PanelProps): JSX.Element {
     </>}
     {tab==="Settings" && <p>Use Settings in the top bar for the existing eTape settings. Engine authority is controlled in its own system view.</p>}
     {tab==="Accounts" && <>
+      <details><summary>Coinbase account · {String(coinbaseAccount?.["state"]??"Checking")}</summary><pre style={{whiteSpace:"pre-wrap"}}>{JSON.stringify(coinbaseAccount,null,2)}</pre></details>
       <p>Robinhood · Real account values · Read only</p>
       {portfolioError && <p role="alert">Portfolio unavailable; retained values are stale.</p>}
       {!portfolio&&!portfolioError && <p>Reading the existing Robinhood gateway...</p>}
@@ -101,10 +108,11 @@ export function KayjayPanel({config}: PanelProps): JSX.Element {
     {snapshot && tab==="RAPTOR15" && <><p>{snapshot.raptor.state} · Existing live reader · No order placement</p>
       <pre style={{whiteSpace:"pre-wrap",lineHeight:1.6}}>{snapshot.raptor.text}</pre>
       <p>{snapshot.raptor.updatedAt ? new Date(snapshot.raptor.updatedAt).toLocaleString() : "Waiting for first live window"}</p></>}
-    {snapshot && ["Positions","Orders"].includes(tab) && <>
-      <p>ATLAS {tab.toLowerCase()} · live engine response</p>
-      <pre style={{whiteSpace:"pre-wrap"}}>{JSON.stringify(snapshot.services.find(s=>s.name===tab)?.data ?? {state:"Unavailable; not a zero balance"},null,2)}</pre>
-      <p>Use the ATLAS tab for its existing preview and approval controls.</p>
+    {["Positions","Orders"].includes(tab) && <>
+      {liveDataError&&<p role="alert">State refresh failed; retained data is stale.</p>}
+      {!liveData&&!liveDataError&&<p>Reading existing engine accounts...</p>}
+      {liveData?.sources.filter(s=>tab==="Positions"?s.engine.includes("positions")||s.engine.includes("P&L"):s.engine.includes("orders")).map(s=><section key={s.engine}><h3>{s.engine} · {s.available?"Received":s.state}</h3><pre style={{whiteSpace:"pre-wrap"}}>{s.available?JSON.stringify(s.data,null,2):"Unavailable. This is not an empty account or a zero balance."}</pre></section>)}
+      <p>Coverage: JINX and ATLAS responses shown separately. RAPTOR15 and unconnected venue accounts are not included in a global total.</p>
     </>}
   </div>;
 }

@@ -72,3 +72,28 @@ test("discovery identifiers cannot escape fixed provider routes",async()=>{
  const p=pairView({chainId:"solana",pairAddress:"pool",baseToken:{symbol:"BONK"},priceUsd:"0.001",volume:{h24:null}});
  assert.equal(p.price,.001);assert.equal(p.volume,null);
 });
+
+import {probe} from "./kayjay.mjs";
+import {connectionState,sourceData} from "./kayjay-state.mjs";
+test("HTTP success with account error is degraded, never a zero balance",async()=>{
+ const result=await probe("ATLAS positions","http://unused",false,async()=>({ok:true,json:async()=>({error:"broker failed",positions:[]})}));
+ assert.equal(result.state,"DEGRADED");assert.equal(sourceData("ATLAS",result).available,false);assert.equal(result.lastSuccess,null);
+});
+test("broker readiness requires authenticated proof",()=>{
+ assert.equal(connectionState("Webull",{ready:true}).state,"DEGRADED");
+ assert.equal(connectionState("OANDA",{ready:true,checks:{authentication:true}}).state,"CONNECTED");
+ assert.equal(connectionState("Robinhood",{connected:false}).authenticated,false);
+});
+
+import {generateKeyPairSync,verify} from "node:crypto";
+import {coinbaseJwt,readCoinbase} from "./kayjay-coinbase.mjs";
+test("Coinbase read JWT binds host, path, expiry and verifiable P-256 signature",()=>{
+ const {privateKey,publicKey}=generateKeyPairSync("ec",{namedCurve:"prime256v1"});
+ const jwt=coinbaseJwt("GET","/api/v3/brokerage/accounts?limit=250",{name:"test",secret:privateKey.export({type:"pkcs8",format:"pem"})},1000);
+ const [h,p,s]=jwt.split(".");const payload=JSON.parse(Buffer.from(p,"base64url"));
+ assert.equal(payload.uri,"GET api.coinbase.com/api/v3/brokerage/accounts");assert.equal(payload.exp,1120);
+ assert.equal(verify("sha256",Buffer.from(h+"."+p),{key:publicKey,dsaEncoding:"ieee-p1363"},Buffer.from(s,"base64url")),true);
+});
+test("Coinbase account adapter rejects order placement resources",async()=>{
+ await assert.rejects(()=>readCoinbase("/orders",{name:"test",secret:"invalid"}));
+});

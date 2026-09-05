@@ -1,3 +1,5 @@
+import {coinbaseSnapshot,coinbaseCurrent} from "./kayjay-coinbase.mjs";
+import {connectionState,sourceData} from "./kayjay-state.mjs";
 import {discover,tokenCandles} from "./kayjay-discovery.mjs";
 import {marketSnapshot} from "./kayjay-market.mjs";
 import http from "node:http";
@@ -57,15 +59,17 @@ async function robinhoodPortfolio() {
  portfolioCache={time:Date.now(),promise};
  try{return await promise;}catch(error){portfolioCache=undefined;throw error;}
 }
-async function probe(name, url, auth = false) {
+const lastSuccess=new Map();
+export async function probe(name, url, auth = false, send = fetch) {
   const started = Date.now();
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(3500),
+    const response = await send(url, { signal: AbortSignal.timeout(3500),
       headers: auth && process.env.MCP_ACCESS_TOKEN ? { Authorization: `Bearer ${process.env.MCP_ACCESS_TOKEN}` } : {} });
-    if (!response.ok) return { name, state: response.status === 401 ? "AUTH REQUIRED" : "UNAVAILABLE", ms: Date.now()-started, data: null };
-    const data = redact(await response.json());
-    return { name, state: name === "Robinhood" && !data.connected ? "LOGIN REQUIRED" : "CONNECTED", ms: Date.now()-started, data };
-  } catch { return { name, state: "OFFLINE", ms: null, data: null }; }
+    if (!response.ok) return { name, state: response.status === 401 ? "AUTH REQUIRED" : "UNAVAILABLE", ms: Date.now()-started, lastSuccess:lastSuccess.get(name)??null, ready:false, authenticated:response.status===401?false:null, data: null };
+    const raw=await response.json(),classification=connectionState(name,raw),data=redact(raw);
+    if(classification.state==="CONNECTED")lastSuccess.set(name,new Date().toISOString());
+    return {name,...classification,ms:Date.now()-started,lastSuccess:lastSuccess.get(name)??null,data};
+  } catch { return { name, state: "OFFLINE", ms: null, lastSuccess:lastSuccess.get(name)??null, ready:false, authenticated:null, data: null }; }
 }
 async function readRaptor() {
   if (raptorBusy) return;
@@ -121,6 +125,9 @@ export function createCockpitServer() {
       try { return res.end(JSON.stringify(await marketSnapshot(url.searchParams.get("symbol") || "BTC",Number(url.searchParams.get("seconds") || 60)))); }
       catch { res.writeHead(502); return res.end(JSON.stringify({error:"Market source unavailable"})); }
     }
+    if(url.pathname==="/kayjay/coinbase"){
+      res.setHeader("Content-Type","application/json");return res.end(JSON.stringify(await coinbaseSnapshot()));
+    }
     if(url.pathname==="/kayjay/portfolio"){
       res.setHeader("Content-Type","application/json");
       try{return res.end(JSON.stringify(await robinhoodPortfolio()));}
@@ -136,6 +143,16 @@ export function createCockpitServer() {
       try{return res.end(JSON.stringify(await discover(url.searchParams.get("q")||"",url.searchParams.get("feed")||"search")));}
       catch{res.writeHead(502);return res.end(JSON.stringify({error:"Token discovery unavailable"}));}
     }
+    if(url.pathname==="/kayjay/data"){
+      const reads=await Promise.all([
+        probe("JINX positions","http://127.0.0.1:8794/positions"),
+        probe("JINX P&L","http://127.0.0.1:8794/pnl"),
+        probe("ATLAS positions","http://127.0.0.1:8080/api/positions"),
+        probe("ATLAS orders","http://127.0.0.1:8080/api/orders/open")
+      ]);
+      res.setHeader("Content-Type","application/json");
+      return res.end(JSON.stringify({asOf:new Date().toISOString(),complete:reads.every(r=>r.state==="CONNECTED"),sources:reads.map(r=>sourceData(r.name,r))}));
+    }
     if (url.pathname === "/kayjay/status") {
       const services = await Promise.all([
         probe("Bluelights", "http://127.0.0.1:8787/health", true),
@@ -143,12 +160,16 @@ export function createCockpitServer() {
         probe("JINX discovery", "http://127.0.0.1:8794/activity"),
         probe("ATLAS", "http://127.0.0.1:8080/api/execution-mode"),
         probe("Brokers", "http://127.0.0.1:8080/api/broker-readiness"),
+        probe("Webull", "http://127.0.0.1:8080/api/webull-readiness"),
+        probe("OANDA", "http://127.0.0.1:8080/api/oanda-readiness"),
         probe("Positions", "http://127.0.0.1:8080/api/positions"),
         probe("Orders", "http://127.0.0.1:8080/api/orders/open"),
         probe("Chrome", "http://127.0.0.1:9222/json/version"),
         probe("Robinhood", "http://127.0.0.1:8765/health")
       ]);
       res.setHeader("Content-Type", "application/json");
+      void coinbaseSnapshot();const coinbase=coinbaseCurrent();services.push({name:"Coinbase",state:coinbase.state,authenticated:coinbase.authenticated,ready:coinbase.ready,ms:coinbase.latencyMs??null,lastSuccess:coinbase.asOf??null,data:{reason:coinbase.reason}});
+      services.push({name:"Kalshi",state:"UNVERIFIED",authenticated:null,ready:false,ms:null,lastSuccess:null,data:{reason:"RAPTOR15 market feed is not proof of authenticated execution"}});
       return res.end(JSON.stringify({ name:"KAYJAY", updatedAt: new Date().toISOString(), services, raptor }));
     }
     try {

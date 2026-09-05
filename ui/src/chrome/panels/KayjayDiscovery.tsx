@@ -1,6 +1,6 @@
 import {createChart,CandlestickSeries,ColorType,type UTCTimestamp} from "lightweight-charts";
 import {useEffect,useRef,useState} from "react";
-type Pair={chain:string;address:string;token:string;symbol:string;name:string;price:number|null;change:number|null;liquidity:number|null;volume:number|null};
+type Pair={chain:string;address:string;token:string;symbol:string;name:string;price:number|null;change:number|null;liquidity:number|null;volume:number|null;marketCap:number|null};
 const amount=(v:number|null)=>v===null?"Unavailable":v.toLocaleString("en-US",{maximumFractionDigits:8});
 export function KayjayDiscovery():JSX.Element{
  const [query,setQuery]=useState("");const [feed,setFeed]=useState("trending");const [request,setRequest]=useState("");
@@ -16,7 +16,7 @@ export function KayjayDiscovery():JSX.Element{
   </form>
   <div className="kayjay-discovery-tabs"><button onClick={()=>{setFeed("trending");setSelected(null);}}>Active meme pairs</button><button onClick={()=>{setFeed("latest");setSelected(null);}}>New token profiles</button><span>{state} · DEX Screener</span></div>
   {selected?<><button onClick={()=>setSelected(null)}>← Search results</button><h2>{selected.symbol} <small>{selected.name}</small></h2><p>{selected.chain} · Contract {selected.token}</p>
-   <p>Price $ {amount(selected.price)} · Liquidity $ {amount(selected.liquidity)} · Volume 24h $ {amount(selected.volume)}</p>
+   <p>Price $ {amount(selected.price)} · Liquidity $ {amount(selected.liquidity)} · Volume 24h $ {amount(selected.volume)} · Market cap USD {amount(selected.marketCap)}</p>
    <KayjayTokenChart pair={selected}/>
   </>:<><p>{feed==="trending"?"PEPE / BONK / WIF / DOGE / SHIB search matches, ranked by reported 24h volume.":"Live token lookup. Names are not unique; verify the chain and contract."}</p>
    <div className="kayjay-token-results"><table><thead><tr><th>Token / chain</th><th>Price USD</th><th>24h</th><th>Liquidity USD</th><th>Volume USD</th></tr></thead><tbody>{rows.map(p=><tr key={p.chain+p.address}><td><button onClick={()=>setSelected(p)}>{p.symbol}</button><small>{p.chain} · {p.name}</small></td><td>{amount(p.price)}</td><td className={(p.change??0)<0?"negative":"positive"}>{amount(p.change)}%</td><td>{amount(p.liquidity)}</td><td>{amount(p.volume)}</td></tr>)}</tbody></table></div>
