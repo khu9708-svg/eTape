@@ -4,7 +4,9 @@ import {discoverCashoutRails,selectCashoutRail,CashoutError} from "./kayjay-cash
 import {createCoinbaseTrader,TradeError} from "./kayjay-coinbase-trade.mjs";
 import {readFileSync,writeFileSync} from "node:fs";
 import {homedir} from "node:os";
-import {createControlIntentStore,createControlForwarder,coordinateExitAll,controlCapabilities} from "./kayjay-control.mjs";
+import {createControlIntentStore,createControlForwarder,coordinateExitAll,controlCapabilities,resolveControlPriority} from "./kayjay-control.mjs";
+import {translateForVenue,RiskError} from "./kayjay-risk.mjs";
+import {createFlattenSchedule,ScheduleError} from "./kayjay-schedule.mjs";
 import {connectionState,sourceData,requireLiveAccount} from "./kayjay-state.mjs";
 import {discover,tokenCandles} from "./kayjay-discovery.mjs";
 import {marketSnapshot} from "./kayjay-market.mjs";
@@ -23,13 +25,30 @@ const projects = path.resolve(root, "../..");
 let payments;
 const controlStore=createControlIntentStore(path.join(homedir(),".eTape"));
 const controls=createControlForwarder({store:controlStore});
-export async function controlAction(request,forwarder=controls){
+const flattenSchedule=createFlattenSchedule(path.join(homedir(),".eTape","flatten-schedule.json"));
+export async function controlAction(request,forwarder=controls,schedule=flattenSchedule){
  switch(request.action){
   case "jinx_order":return forwarder.manualJinx(request);
   case "atlas_exit":return forwarder.exitAtlas(request);
   case "atlas_cancel":return forwarder.cancelAllAtlas(request);
   case "atlas_stop":return forwarder.tightenStopAtlas(request);
   case "exit_all":return coordinateExitAll(request,{store:controlStore});
+  case "priority":return resolveControlPriority(request.input||{});
+  case "risk_translate":{
+   const venue=String(request.input?.venue||"").toUpperCase();
+   return translateForVenue(request.input?.contract||{},venue);
+  }
+  case "schedule_list":return {rules:schedule.list()};
+  case "schedule_due":return {due:schedule.due(new Date(),new Date(Date.now()-60000))};
+  case "schedule_add":
+   if(request.owner!==true||request.confirm!==true)throw new ScheduleError("owner_confirmation_required","Owner confirmation is required to add a scheduled flatten.");
+   return schedule.add(request.input||{});
+  case "schedule_remove":
+   if(request.owner!==true||request.confirm!==true)throw new ScheduleError("owner_confirmation_required","Owner confirmation is required to remove a scheduled flatten.");
+   return schedule.remove(request.input?.id);
+  case "schedule_enable":
+   if(request.owner!==true||request.confirm!==true)throw new ScheduleError("owner_confirmation_required","Owner confirmation is required.");
+   return schedule.setEnabled(request.input?.id,request.input?.enabled===true);
   default:throw new Error("Unsupported control action");
  }
 }
@@ -205,7 +224,7 @@ export function createCockpitServer() {
       if(req.headers.origin!==origin||!req.headers["content-type"]?.startsWith("application/json")){res.writeHead(403);return res.end();}
       try{let body="";for await(const chunk of req){body+=chunk;if(Buffer.byteLength(body)>4096)throw new Error();}
         return res.end(JSON.stringify(await controlAction(JSON.parse(body))));
-      }catch{res.writeHead(409);return res.end(JSON.stringify({error:"Control request rejected or unconfirmed. Check authority state before retrying."}));}
+      }catch(error){const known=error instanceof RiskError||error instanceof ScheduleError;res.writeHead(known?400:409);return res.end(JSON.stringify({error:known?error.message:"Control request rejected or unconfirmed. Check authority state before retrying.",code:known?error.code:undefined}));}
     }
     if (req.method !== "GET") { res.writeHead(405); return res.end(); }
     const url = new URL(req.url, origin);

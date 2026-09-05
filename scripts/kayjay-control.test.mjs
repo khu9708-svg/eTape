@@ -3,7 +3,19 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createControlForwarder, createControlIntentStore, coordinateExitAll } from './kayjay-control.mjs';
+import { createControlForwarder, createControlIntentStore, coordinateExitAll, resolveControlPriority, CONTROL_PRIORITY } from './kayjay-control.mjs';
+
+test('owner-priority ladder: emergency > scheduled flatten > owner override > AUTO', () => {
+  assert.deepEqual(CONTROL_PRIORITY, ['EMERGENCY', 'SCHEDULED_FLATTEN', 'OWNER_OVERRIDE', 'AUTO']);
+  assert.equal(resolveControlPriority({ emergency: true, auto: true }).winner, 'EMERGENCY');
+  assert.equal(resolveControlPriority({ scheduledFlattenDue: true, ownerOverride: true, auto: true }).winner, 'SCHEDULED_FLATTEN');
+  assert.equal(resolveControlPriority({ ownerOverride: true, auto: true }).winner, 'OWNER_OVERRIDE');
+  assert.equal(resolveControlPriority({ auto: true }).winner, 'AUTO');
+  // A manual owner action stays admissible while AUTO is the winner.
+  assert.equal(resolveControlPriority({ auto: true }).ownerActionAdmissible, true);
+  // Priority resolution never changes engine mode.
+  assert.equal(resolveControlPriority({ auto: true }).modeChange, false);
+});
 
 function memoryStore() {
   const map = new Map();

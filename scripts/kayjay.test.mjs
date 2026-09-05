@@ -119,6 +119,13 @@ test("payment and control HTTP dispatch cannot invent provider or execution acti
  const blocked=await controlAction({action:'exit_all',id:'test-exit-all',owner:true,confirm:true,venues:['JINX','ATLAS','RAPTOR15']});
  assert.equal(blocked.status,'unsupported');assert.equal(blocked.mutated,false);assert.equal(blocked.venues.length,3);
 });
+test("control dispatch exposes priority, risk translation, and owner-gated schedule",async()=>{
+ const p=await controlAction({action:'priority',input:{auto:true,ownerOverride:true}});
+ assert.equal(p.winner,'OWNER_OVERRIDE');assert.equal(p.modeChange,false);
+ const r=await controlAction({action:'risk_translate',input:{venue:'ATLAS',contract:{stopLoss:95,takeProfit:110}}});
+ assert.equal(r.venueOrder.new_stop_price,95);assert.equal(r.unsupported[0].field,'takeProfit');
+ await assert.rejects(()=>controlAction({action:'schedule_add',input:{}}),/Owner confirmation/);
+});
 test("Coinbase trade dispatch defaults OFF, needs owner confirm to change mode, and gates submit",async()=>{
  const fakeTrader={submit:async(_o,ctx)=>({echo:ctx}),cancel:async()=>({}),getOrder:async()=>({}),reconcile:async()=>({})};
  assert.equal((await tradeAction({action:'mode'},fakeTrader)).mode,coinbaseMode());

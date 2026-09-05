@@ -28,6 +28,47 @@ type PaymentResult = {
   order?:{orderId?:string;status?:string;paymentTotal?:string;paymentCurrency?:string;purchaseAmount?:string;purchaseCurrency?:string;fees?:{amount?:string;currency?:string}[]};
 };
 
+type FlattenRule = {id?:string;scope?:string;engine?:string|null;symbol?:string|null;action?:string;timezone?:string;weekdays?:number[];time?:string;enabled?:boolean};
+
+// Scheduled flatten + normalized-risk preview. EXIT ALL and per-engine exits
+// live in their own engine views; this is the schedule/risk config surface.
+function ControlPanel(): JSX.Element {
+  const [rules,setRules]=useState<FlattenRule[]|null>(null);
+  const [msg,setMsg]=useState("");
+  const [form,setForm]=useState<FlattenRule>({id:"",scope:"engine",engine:"ATLAS",action:"EXIT_ENGINE",timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,time:"15:55"});
+  const [days,setDays]=useState("1,2,3,4,5");
+  async function control(body:Record<string,unknown>) {
+    try { const r=await fetch("/kayjay/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:AbortSignal.timeout(10000)}); return await r.json(); }
+    catch { setMsg("Control endpoint unavailable."); return null; }
+  }
+  async function refresh(){const d=await control({action:"schedule_list"});if(d?.rules)setRules(d.rules as FlattenRule[]);}
+  useEffect(()=>{void refresh();},[]);
+  async function add(){
+    const weekdays=days.split(",").map(s=>Number(s.trim())).filter(n=>n>=0&&n<=6);
+    const d=await control({action:"schedule_add",owner:true,confirm:true,input:{...form,weekdays}});
+    setMsg(d?.error??(d?.id?`Added ${d.id}`:"Add failed"));void refresh();
+  }
+  return <details><summary>Control · scheduled flatten &amp; normalized risk</summary>
+    <p>Priority: emergency &gt; scheduled flatten &gt; OWNER_OVERRIDE &gt; AUTO. Scheduled flatten never changes an engine's long-term mode. Normalized risk is one contract translated per venue; unsupported features are reported, not simulated.</p>
+    <h4>Scheduled flatten rules</h4>
+    {rules===null?<p>Loading…</p>:rules.length===0?<p>No rules.</p>:
+      <table style={{width:"100%"}}><thead><tr><th>ID</th><th>Scope</th><th>Action</th><th>When</th><th>On</th><th/></tr></thead>
+        <tbody>{rules.map(r=><tr key={r.id}><td>{r.id}</td><td>{r.scope}{r.engine?`:${r.engine}`:""}{r.symbol?`:${r.symbol}`:""}</td><td>{r.action}</td><td>{r.time} {r.timezone}</td><td>{(r.weekdays??[]).join(",")}</td>
+          <td><button onClick={()=>void control({action:"schedule_remove",owner:true,confirm:true,input:{id:r.id}}).then(refresh)}>Remove</button></td></tr>)}</tbody></table>}
+    <fieldset style={{border:0,padding:0}}>
+      <label style={{display:"block",margin:"4px 0"}}>ID <input value={form.id??""} onChange={e=>setForm({...form,id:e.target.value.trim()})}/></label>
+      <label style={{display:"block",margin:"4px 0"}}>Scope <select value={form.scope} onChange={e=>setForm({...form,scope:e.target.value})}><option>engine</option><option>symbol</option><option>global</option></select></label>
+      {form.scope!=="global"&&<label style={{display:"block",margin:"4px 0"}}>Engine <select value={form.engine??"ATLAS"} onChange={e=>setForm({...form,engine:e.target.value})}><option>JINX</option><option>ATLAS</option><option>RAPTOR15</option></select></label>}
+      {form.scope==="symbol"&&<label style={{display:"block",margin:"4px 0"}}>Symbol <input value={form.symbol??""} onChange={e=>setForm({...form,symbol:e.target.value.trim()})}/></label>}
+      <label style={{display:"block",margin:"4px 0"}}>Action <select value={form.action} onChange={e=>setForm({...form,action:e.target.value})}><option>EXIT_POSITION</option><option>EXIT_SYMBOL</option><option>EXIT_ENGINE</option><option>EXIT_ALL</option></select></label>
+      <label style={{display:"block",margin:"4px 0"}}>Time (HH:MM) <input value={form.time??""} onChange={e=>setForm({...form,time:e.target.value.trim()})}/></label>
+      <label style={{display:"block",margin:"4px 0"}}>Weekdays (0-6, comma) <input value={days} onChange={e=>setDays(e.target.value)}/></label>
+      <button onClick={()=>void add()}>Add rule</button>
+    </fieldset>
+    {msg&&<p role="status">{msg}</p>}
+  </details>;
+}
+
 type TradeResult = {error?:string;code?:string;mode?:string;state?:string;clientOrderId?:string;coinbaseOrderId?:string|null;rejectReason?:string|null;note?:string;duplicate?:boolean;filledSize?:string|null};
 
 // Coinbase Advanced Trade, gated by the KAYJAY Coinbase execution mode.
@@ -298,6 +339,7 @@ export function KayjayPanel({config}: PanelProps): JSX.Element {
       <SandboxPayments/>
       <CashoutRails/>
       <CoinbaseTrading/>
+      <ControlPanel/>
       <details><summary>Coinbase account · {coinbaseError?"STALE / UNAVAILABLE":coinbaseAccount?.state??"Checking"}</summary>
         <p>Read only · Refreshes every 30 seconds while Accounts is open.</p>
         {coinbaseError&&<p role="alert">Coinbase refresh failed. Retained data is stale; account readiness is unknown.</p>}

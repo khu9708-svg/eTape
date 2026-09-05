@@ -16,6 +16,32 @@ export function createControlIntentStore(directory) {
   };
 }
 
+// Owner-priority execution contract. Higher wins. AUTO strategy is the floor and
+// is never allowed to suppress a manual owner action — a manual ENTER/BUY/SELL/
+// EXIT is always admissible while AUTO runs, and AUTO stays AUTO afterwards.
+export const CONTROL_PRIORITY = ['EMERGENCY', 'SCHEDULED_FLATTEN', 'OWNER_OVERRIDE', 'AUTO'];
+
+/**
+ * Resolve which control source acts now. `context` flags which sources are
+ * currently asserting. Returns { winner, order, modeChange:false } — resolving
+ * priority never changes engine mode.
+ */
+export function resolveControlPriority(context = {}) {
+  const active = CONTROL_PRIORITY.filter(level => {
+    if (level === 'EMERGENCY') return context.emergency === true;
+    if (level === 'SCHEDULED_FLATTEN') return context.scheduledFlattenDue === true;
+    if (level === 'OWNER_OVERRIDE') return context.ownerOverride === true;
+    return context.auto === true;
+  });
+  return {
+    winner: active[0] ?? null,
+    order: active,
+    // A manual owner action is admissible even when AUTO is the winner.
+    ownerActionAdmissible: context.ownerOverride === true || active[0] !== 'EMERGENCY',
+    modeChange: false,
+  };
+}
+
 export const controlCapabilities = {
   JINX: { manualOrder: true, preservesAuto: true, exitAll: false, reasons: ['No entry hold independent of mode', 'No working-order listing or cancellation endpoint', 'No authoritative venue reconciliation endpoint'] },
   ATLAS: { exitPosition: true, cancelAll: true, tightenStop: true, normalizedStops: 'partial: absolute stopLoss tightening only', exitAll: false, reasons: ['Independent entry hold and authoritative complete reconciliation not verified', 'Take-profit, trailing-stop and maximum-hold forwarding unsupported'] },
