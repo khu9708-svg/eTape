@@ -156,3 +156,14 @@ test("ATLAS simulated account fallback is excluded without live broker registrat
  assert.equal(requireLiveAccount({state:"CONNECTED",data:{positions:[]}},false).data,null);
  assert.equal(requireLiveAccount({state:"CONNECTED",data:{positions:[]}},true).state,"CONNECTED");
 });
+
+test("exit_all_preview is read-only and returns per-venue supported + counts",async()=>{
+ // No JINX/ATLAS worker running -> authorities report unsupported / incomplete,
+ // but the shape must be right and nothing is mutated.
+ const out=await controlAction({action:"exit_all_preview",venues:["JINX","ATLAS","RAPTOR15"]});
+ assert.ok(out.venues.JINX&&out.venues.ATLAS);
+ assert.equal(out.venues.JINX.supported,false); // capabilities unreachable
+ assert.equal(out.venues.JINX.workingOrders.complete,false);
+ assert.equal(out.venues.RAPTOR15.supported,false);
+ assert.match(out.venues.RAPTOR15.reason,/no EXIT ALL authority/);
+});

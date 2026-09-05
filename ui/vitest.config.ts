@@ -126,6 +126,7 @@ export default defineConfig({
             'src/chrome/panels/registry.test.tsx',
             'src/chrome/panels/ScannerPanel.test.tsx',
             'src/chrome/panels/walletConnect.test.ts',
+            'src/chrome/panels/confirmFlow.test.ts',
             'src/chrome/scannerSync.test.ts',
             'src/chrome/workspace.test.ts',
           ],

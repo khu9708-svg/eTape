@@ -11,6 +11,14 @@ import {
   type WalletConnectionState,
   type WalletKind,
 } from "./walletConnect";
+import {
+  ProgressSteps,
+  ReviewRow,
+  OwnerConfirmGate,
+  isConfirmed,
+  stepsForPhase,
+  type OwnerActionPhase,
+} from "./confirmFlow";
 
 type JinxWallet = {
   error?: string;
@@ -80,6 +88,186 @@ function WalletPanel(): JSX.Element {
     <h4>JINX execution signer (autonomous — never Phantom)</h4>
     {jinx?.signer && <p>Address: <code>{jinx.signer.address}</code> · role: {jinx.signer.role} · SOL: {jinx.signer.balanceSol ?? "Unavailable"} · SPL: {(jinx.signer.splTokens ?? []).length}</p>}
     <p style={{ opacity: 0.75 }}>Funding destination for owner deposits: the execution signer address above. Withdrawals return to the Phantom owner wallet.</p>
+  </details>;
+}
+
+// ── JINX Withdraw ─────────────────────────────────────────────────────────
+// Interaction pattern adapted from Uniswap's Send confirmation flow
+// (amount → destination → review → confirm → pending → confirmed), wired to
+// the existing /kayjay/wallet/quote and /kayjay/wallet/withdraw proxies. No
+// backend logic here — the JINX worker's wallet-ops.mjs is the only signer.
+type WithdrawQuote = { error?: string; from?: string; destination?: string; amountSol?: number; estimatedFeeSol?: number; balanceAfterSol?: number; isMax?: boolean };
+type WithdrawResult = { error?: string; ok?: boolean; signature?: string; explorerUrl?: string; amountSol?: number; destination?: string };
+
+function JinxWithdrawPanel(): JSX.Element {
+  const [phase, setPhase] = useState<OwnerActionPhase>("enter");
+  const [amount, setAmount] = useState("");
+  const [destination, setDestination] = useState("");
+  const [quote, setQuote] = useState<WithdrawQuote | null>(null);
+  const [result, setResult] = useState<WithdrawResult | null>(null);
+  const [confirm, setConfirm] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  useEffect(() => {
+    // Default the destination to the configured Phantom owner wallet.
+    fetch("/kayjay/wallet").then((r) => r.json()).then((d: JinxWallet) => {
+      if (d?.owner?.configured && d.owner.address) setDestination(d.owner.address);
+    }).catch(() => {});
+  }, []);
+
+  const lamports = (() => { const n = Number(amount); return Number.isFinite(n) && n > 0 ? Math.round(n * 1e9) : null; })();
+
+  async function review() {
+    if (!lamports || !destination) return;
+    setPhase("reviewing"); setMsg(""); setResult(null);
+    try {
+      const r = await fetch("/kayjay/wallet/quote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ destination, amountLamports: lamports }), signal: AbortSignal.timeout(12000) });
+      const q = await r.json() as WithdrawQuote;
+      if (!r.ok || q.error) { setPhase("enter"); setMsg(q.error ?? "Quote failed."); return; }
+      setQuote(q); setConfirm(false); setPhase("review_ready");
+    } catch { setPhase("enter"); setMsg("JINX wallet quote is unavailable."); }
+  }
+
+  async function submit() {
+    if (!isConfirmed({ checked: confirm })) return;
+    setPhase("confirming"); setMsg("");
+    try {
+      const r = await fetch("/kayjay/wallet/withdraw", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ destination, amountLamports: lamports, confirm: true }), signal: AbortSignal.timeout(35000) });
+      const w = await r.json() as WithdrawResult;
+      if (!r.ok || w.error) {
+        setResult(w);
+        setPhase(r.status === 504 ? "unknown" : "failed");
+        setMsg(w.error ?? "Withdrawal was rejected.");
+        return;
+      }
+      setResult(w); setPhase("success");
+      setMsg("Withdrawal confirmed on-chain. Verify the signature on the explorer.");
+    } catch {
+      setPhase("unknown");
+      setMsg("Withdrawal outcome is UNKNOWN — the transaction may have reached the chain. Do NOT retry. Check the explorer / JINX wallet activity first.");
+    }
+  }
+
+  function reset() { setPhase("enter"); setQuote(null); setResult(null); setConfirm(false); setMsg(""); }
+
+  const steps = stepsForPhase(phase, ["Enter & review", "Confirm", "Submit", "Confirmed on-chain"]);
+  return <details><summary>JINX Withdraw{phase === "success" ? " · confirmed" : phase === "unknown" ? " · UNKNOWN" : phase === "failed" ? " · failed" : ""}</summary>
+    <p>Move SOL from the JINX execution wallet (D5f) to a destination — normally the Phantom owner wallet. The JINX worker's local keypair is the only signer; this screen never signs.</p>
+    <ProgressSteps steps={steps} />
+
+    {(phase === "enter" || phase === "reviewing") && <fieldset disabled={phase === "reviewing"} style={{ border: 0, padding: 0 }}>
+      <label style={{ display: "block", margin: "6px 0" }}>Amount (SOL) <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.001" /></label>
+      <label style={{ display: "block", margin: "6px 0" }}>Destination <input style={{ width: "100%", boxSizing: "border-box" }} value={destination} onChange={(e) => setDestination(e.target.value.trim())} autoComplete="off" spellCheck={false} /></label>
+      <button disabled={!lamports || !destination} onClick={() => void review()}>Review withdrawal</button>
+    </fieldset>}
+
+    {phase === "review_ready" && quote && <div>
+      <ReviewRow label="From (execution signer)" value={<code>{quote.from}</code>} />
+      <ReviewRow label="To" value={<code>{quote.destination}</code>} />
+      <ReviewRow label="Amount" value={`${quote.amountSol} SOL`} />
+      <ReviewRow label="Network fee (est.)" value={`${quote.estimatedFeeSol} SOL`} />
+      <ReviewRow label="Signer balance after" value={`${quote.balanceAfterSol} SOL`} />
+      <OwnerConfirmGate label="I confirm this on-chain withdrawal." checked={confirm} onCheckedChange={setConfirm} />
+      <button disabled={!isConfirmed({ checked: confirm })} onClick={() => void submit()}>Confirm & withdraw</button>
+      <button style={{ marginLeft: 8 }} onClick={reset}>Back</button>
+    </div>}
+
+    {phase === "confirming" && <p role="status">Submitting to the JINX worker and waiting for on-chain confirmation…</p>}
+
+    {(phase === "success" || phase === "failed" || phase === "unknown") && <div>
+      {result?.signature && <ReviewRow label="Signature" value={<code>{result.signature}</code>} />}
+      {result?.explorerUrl && <p><a href={result.explorerUrl} target="_blank" rel="noopener noreferrer">Open on Solscan</a></p>}
+      {phase === "unknown" && <p role="alert">Automatic retries are disabled. Check the explorer before any further action.</p>}
+      <button onClick={reset}>New withdrawal</button>
+    </div>}
+
+    {msg && <p role={phase === "unknown" || phase === "failed" ? "alert" : "status"}>{msg}</p>}
+  </details>;
+}
+
+// ── EXIT ALL ─────────────────────────────────────────────────────────────
+// Same review → explicit-confirm → progress → per-venue reconciliation
+// pattern, applied to the one destructive control. Wired to the existing
+// /kayjay/control exit_all_preview + exit_all actions. No liquidation logic
+// here — the KAYJAY coordinator owns it.
+type ExitPreview = { venues?: Record<string, { supported?: boolean; reason?: string; workingOrders?: { count?: number | null; complete?: boolean }; positions?: { count?: number | null; complete?: boolean } }> };
+type ExitOutcome = { error?: string; status?: string; reconciled?: boolean; entryHoldsRetained?: boolean; mutated?: boolean; venues?: ({ venue?: string; status?: string; reconciled?: boolean; reasons?: string[]; reason?: string })[] };
+
+function ExitAllPanel(): JSX.Element {
+  const [phase, setPhase] = useState<OwnerActionPhase>("enter");
+  const [venues, setVenues] = useState<string[]>(["JINX", "ATLAS"]);
+  const [preview, setPreview] = useState<ExitPreview | null>(null);
+  const [typed, setTyped] = useState("");
+  const [outcome, setOutcome] = useState<ExitOutcome | null>(null);
+  const [msg, setMsg] = useState("");
+
+  function toggle(v: string) { setVenues((cur) => cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v]); setPreview(null); setPhase("enter"); }
+
+  async function loadSummary() {
+    if (!venues.length) return;
+    setPhase("reviewing"); setMsg(""); setOutcome(null);
+    try {
+      const r = await fetch("/kayjay/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "exit_all_preview", venues }), signal: AbortSignal.timeout(15000) });
+      setPreview(await r.json() as ExitPreview); setTyped(""); setPhase("review_ready");
+    } catch { setPhase("enter"); setMsg("Could not read venue state. Do not run EXIT ALL blind."); }
+  }
+
+  async function run() {
+    if (typed.trim() !== "EXIT ALL") return;
+    setPhase("confirming"); setMsg("");
+    try {
+      const r = await fetch("/kayjay/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "exit_all", id: "kj-exitall-" + Date.now().toString(36), owner: true, confirm: true, venues }), signal: AbortSignal.timeout(60000) });
+      const o = await r.json() as ExitOutcome;
+      setOutcome(o);
+      if (o.status === "complete" && o.reconciled) { setPhase("success"); setMsg("Every requested venue is authoritatively flat."); }
+      else if (o.status === "unsupported") { setPhase("failed"); setMsg("A requested venue does not support EXIT ALL. Nothing was mutated."); }
+      else { setPhase("unknown"); setMsg("EXIT ALL did not fully reconcile. Entry holds are retained. Review per-venue results, then re-run EXIT ALL — never assume flat."); }
+    } catch {
+      setPhase("unknown");
+      setMsg("EXIT ALL outcome is UNKNOWN. Entry holds may be retained. Check each venue directly before re-running.");
+    }
+  }
+
+  function reset() { setPhase("enter"); setPreview(null); setOutcome(null); setTyped(""); setMsg(""); }
+
+  const steps = stepsForPhase(phase, ["Review venue state", "Confirm", "Exit & cancel", "Per-venue reconcile → flat"]);
+  return <details><summary>EXIT ALL{phase === "success" ? " · flat" : phase === "unknown" ? " · INCOMPLETE" : ""}</summary>
+    <p role="alert">Destructive. Cancels working orders and liquidates open positions on every selected venue, holding new entries until each venue authoritatively confirms zero positions and zero working orders. Engine mode is never changed.</p>
+    <ProgressSteps steps={steps} />
+
+    {(phase === "enter" || phase === "reviewing") && <fieldset disabled={phase === "reviewing"} style={{ border: 0, padding: 0 }}>
+      {["JINX", "ATLAS"].map((v) => <label key={v} style={{ marginRight: 12 }}><input type="checkbox" checked={venues.includes(v)} onChange={() => toggle(v)} /> {v}</label>)}
+      <div><button disabled={!venues.length} onClick={() => void loadSummary()}>Review venue state</button></div>
+    </fieldset>}
+
+    {phase === "review_ready" && preview?.venues && <div>
+      <table style={{ width: "100%" }}><thead><tr><th>Venue</th><th>Supported</th><th>Working orders</th><th>Open positions</th></tr></thead>
+        <tbody>{Object.entries(preview.venues).map(([v, s]) => <tr key={v}>
+          <td>{v}</td>
+          <td>{s.supported ? "Yes" : `No — ${s.reason ?? "unsupported"}`}</td>
+          <td>{s.workingOrders?.complete === false ? "unknown" : s.workingOrders?.count ?? "—"}</td>
+          <td>{s.positions?.complete === false ? "unknown" : s.positions?.count ?? "—"}</td>
+        </tr>)}</tbody></table>
+      <OwnerConfirmGate requireTyped="EXIT ALL" typedValue={typed} onTypedChange={setTyped} label="Confirm EXIT ALL" />
+      <button disabled={typed.trim() !== "EXIT ALL"} onClick={() => void run()}>Run EXIT ALL</button>
+      <button style={{ marginLeft: 8 }} onClick={reset}>Cancel</button>
+    </div>}
+
+    {phase === "confirming" && <p role="status">Holding entries, cancelling working orders, exiting positions, reconciling every venue…</p>}
+
+    {(phase === "success" || phase === "failed" || phase === "unknown") && outcome && <div>
+      <ReviewRow label="Overall" value={outcome.status ?? "unknown"} alert={phase !== "success"} />
+      {outcome.entryHoldsRetained && <ReviewRow label="Entry holds" value="retained (release manually once verified flat)" alert />}
+      <table style={{ width: "100%" }}><thead><tr><th>Venue</th><th>Status</th><th>Reconciled</th><th>Detail</th></tr></thead>
+        <tbody>{(outcome.venues ?? []).map((r, i) => <tr key={r.venue ?? i}>
+          <td>{r.venue}</td><td>{r.status}</td><td>{r.reconciled ? "yes" : "no"}</td>
+          <td>{r.reason ?? (r.reasons ?? []).join("; ")}</td>
+        </tr>)}</tbody></table>
+      {phase !== "success" && <button onClick={() => void run()}>Re-run EXIT ALL</button>}
+      <button style={{ marginLeft: 8 }} onClick={reset}>Done</button>
+    </div>}
+
+    {msg && <p role={phase === "success" ? "status" : "alert"}>{msg}</p>}
   </details>;
 }
 
@@ -457,10 +645,12 @@ export function KayjayPanel({config}: PanelProps): JSX.Element {
     {tab==="Settings" && <p>Use Settings in the top bar for the existing eTape settings. Engine authority is controlled in its own system view.</p>}
     {tab==="Accounts" && <>
       <WalletPanel/>
+      <JinxWithdrawPanel/>
       <SandboxPayments/>
       <CashoutRails/>
       <CoinbaseTrading/>
       <ControlPanel/>
+      <ExitAllPanel/>
       <details><summary>Coinbase account · {coinbaseError?"STALE / UNAVAILABLE":coinbaseAccount?.state??"Checking"}</summary>
         <p>Read only · Refreshes every 30 seconds while Accounts is open.</p>
         {coinbaseError&&<p role="alert">Coinbase refresh failed. Retained data is stale; account readiness is unknown.</p>}

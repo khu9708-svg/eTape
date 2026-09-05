@@ -53,6 +53,25 @@ export async function controlAction(request,forwarder=controls,schedule=flattenS
   case "atlas_exit":return forwarder.exitAtlas(request);
   case "atlas_cancel":return forwarder.cancelAllAtlas(request);
   case "atlas_stop":return forwarder.tightenStopAtlas(request);
+  case "exit_all_preview":{
+   // Read-only: authoritative working-orders + positions per requested venue.
+   // No hold, no cancel, no exit — this is what the owner reviews before EXIT ALL.
+   const venues=Array.isArray(request.venues)?request.venues:[];
+   const out={};
+   for(const v of venues){
+    const a=v==="JINX"?await createJinxExitAllAuthority({}):v==="ATLAS"?await createAtlasExitAllAuthority({}):null;
+    if(!a){out[v]={supported:false,reason:"no EXIT ALL authority implemented for this venue"};continue;}
+    const cap=a.capabilities||{};
+    const [orders,positions]=await Promise.all([a.listWorkingOrders(),a.listPositions()]);
+    out[v]={
+     supported:cap.independentEntryHold===true&&cap.authoritativeReconciliation===true,
+     capabilities:cap,
+     workingOrders:{complete:orders.complete===true,count:Array.isArray(orders.orders)?orders.orders.length:null,orders:orders.orders??[]},
+     positions:{complete:positions.complete===true,count:Array.isArray(positions.positions)?positions.positions.length:null,positions:positions.positions??[]},
+    };
+   }
+   return {venues:out};
+  }
   case "exit_all":{
    // Build the real authority object per requested venue. A venue with no
    // implemented authority is simply absent -> coordinator reports it unsupported.
@@ -270,12 +289,28 @@ export function createCockpitServer() {
         return res.end(JSON.stringify(await paymentAction(JSON.parse(body))));
       }catch(error){res.writeHead(error instanceof PaymentError?error.status:400);return res.end(JSON.stringify({error:error instanceof PaymentError?error.message:"Payment request failed.",code:error instanceof PaymentError?error.code:"invalid_request"}));}
     }
-    if(req.method==="GET"&&req.url.startsWith("/kayjay/wallet")){
+    if(req.method==="GET"&&req.url==="/kayjay/wallet"){
       res.setHeader("Cache-Control","no-store");res.setHeader("Content-Type","application/json");
       try{
         const r=await fetch("http://127.0.0.1:8794/wallet",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({limit:20}),signal:AbortSignal.timeout(9000)});
         return res.end(JSON.stringify(await r.json()));
       }catch{res.writeHead(502);return res.end(JSON.stringify({error:"JINX worker wallet endpoint unavailable. Connection state is unknown; this is not an empty wallet."}));}
+    }
+    if(req.method==="POST"&&(req.url==="/kayjay/wallet/quote"||req.url==="/kayjay/wallet/withdraw")){
+      // Thin proxy to the JINX owner-console wallet path. No signing / no logic here —
+      // the worker's wallet-ops.mjs is the single fund-moving authority, unchanged.
+      res.setHeader("Cache-Control","no-store");res.setHeader("Content-Type","application/json");
+      if(req.headers.origin!==origin||!req.headers["content-type"]?.startsWith("application/json")){res.writeHead(403);return res.end();}
+      const withdraw=req.url.endsWith("withdraw");
+      if(withdraw&&b.confirm!==true){res.writeHead(400);return res.end(JSON.stringify({error:"withdrawal requires confirm:true after review"}));}
+      try{
+        const r=await fetch(`http://127.0.0.1:8794/wallet/${withdraw?"withdraw":"quote"}`,{
+          method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({destination:b.destination,amountLamports:b.amountLamports,...(withdraw?{confirm:true}:{})}),
+          signal:AbortSignal.timeout(withdraw?30000:9000),
+        });
+        return res.end(JSON.stringify(await r.json()));
+      }catch{res.writeHead(withdraw?504:502);return res.end(JSON.stringify({error:withdraw?"Withdrawal outcome is UNKNOWN — the request may have reached the chain. Do not retry; check the JINX wallet activity / a block explorer before any further action.":"JINX wallet quote unavailable."}));}
     }
     if(req.method==="POST"&&req.url==="/kayjay/trade"){
       res.setHeader("Cache-Control","no-store");res.setHeader("Content-Type","application/json");
