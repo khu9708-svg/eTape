@@ -98,6 +98,16 @@ test("Coinbase account adapter rejects order placement resources",async()=>{
  await assert.rejects(()=>readCoinbase("/orders",{name:"test",secret:"invalid"}));
 });
 
+test("Coinbase Ed25519 credentials produce a independently verified signature",()=>{
+ const {privateKey,publicKey}=generateKeyPairSync("ed25519");
+ const seed=privateKey.export({format:"der",type:"pkcs8"}).subarray(-32);
+ const raw=Buffer.concat([seed,publicKey.export({format:"der",type:"spki"}).subarray(-32)]);
+ const jwt=coinbaseJwt("GET","/api/v3/brokerage/accounts",{name:"test",secret:raw.toString("base64")},1000);
+ const [h,p,s]=jwt.split(".");
+ assert.equal(JSON.parse(Buffer.from(h,"base64url")).alg,"EdDSA");
+ assert.equal(verify(null,Buffer.from(h+"."+p),publicKey,Buffer.from(s,"base64url")),true);
+});
+
 import {requireLiveAccount} from "./kayjay-state.mjs";
 test("ATLAS simulated account fallback is excluded without live broker registration",()=>{
  assert.equal(requireLiveAccount({state:"CONNECTED",data:{positions:[]}},false).data,null);

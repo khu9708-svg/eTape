@@ -1,16 +1,30 @@
 import {createPrivateKey,randomBytes,sign} from "node:crypto";
+import {existsSync} from "node:fs";
+import {homedir} from "node:os";
+import {join} from "node:path";
+import {loadEnvFile} from "node:process";
+const credentialFile=join(homedir(),".eTape","coinbase.env");
+if(existsSync(credentialFile))loadEnvFile(credentialFile);
 export function coinbaseCredentials(env=process.env){
  return {name:env.COINBASE_API_KEY_NAME||env.CDP_API_KEY_ID,secret:env.COINBASE_API_PRIVATE_KEY||env.CDP_API_KEY_SECRET};
 }
 export function coinbaseJwt(method,resource,credentials,now=Math.floor(Date.now()/1000)){
  if(!credentials.name||!credentials.secret)throw new Error("Coinbase API credentials are UNSET");
- const key=createPrivateKey(credentials.secret.replace(/\\n/g,"\n"));
- if(key.asymmetricKeyType!=="ec"||key.asymmetricKeyDetails?.namedCurve!=="prime256v1")throw new Error("Coinbase Advanced Trade requires a P-256 API key for this adapter");
+ const secret=credentials.secret.replace(/\\n/g,"\n").trim();
+ let key;
+ if(secret.startsWith("-----BEGIN"))key=createPrivateKey(secret);
+ else {
+  const raw=Buffer.from(secret,"base64");
+  if(!/^[A-Za-z0-9+/]+={0,2}$/.test(secret)||![32,64].includes(raw.length))throw new Error("Invalid Coinbase signing key format");
+  key=createPrivateKey({key:Buffer.concat([Buffer.from("302e020100300506032b657004220420","hex"),raw.subarray(0,32)]),format:"der",type:"pkcs8"});
+ }
+ const ed=key.asymmetricKeyType==="ed25519";
+ if(!ed&&(key.asymmetricKeyType!=="ec"||key.asymmetricKeyDetails?.namedCurve!=="prime256v1"))throw new Error("Unsupported Coinbase signing key type");
  const encode=value=>Buffer.from(JSON.stringify(value)).toString("base64url");
- const header=encode({alg:"ES256",typ:"JWT",kid:credentials.name,nonce:randomBytes(16).toString("hex")});
+ const header=encode({alg:ed?"EdDSA":"ES256",typ:"JWT",kid:credentials.name,nonce:randomBytes(16).toString("hex")});
  const payload=encode({sub:credentials.name,iss:"cdp",nbf:now,exp:now+120,uri:method+" api.coinbase.com"+resource.split("?")[0]});
  const input=header+"."+payload;
- return input+"."+sign("sha256",Buffer.from(input),{key,dsaEncoding:"ieee-p1363"}).toString("base64url");
+ return input+"."+sign(ed?null:"sha256",Buffer.from(input),ed?key:{key,dsaEncoding:"ieee-p1363"}).toString("base64url");
 }
 const resources=new Set(["/accounts","/orders/historical/batch","/orders/historical/fills"]);
 export async function readCoinbase(resource,credentials=coinbaseCredentials(),send=fetch){

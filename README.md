@@ -547,14 +547,22 @@ Health now rejects HTTP-200 error payloads as degraded and retains the last
 successful response timestamp. Webull/OANDA use their existing readiness
 endpoints; authenticated proof is distinct from registration/readiness flags.
 Coinbase account authentication is distinct from its public chart feed.
+The local adapter loads `%USERPROFILE%/.eTape/coinbase.env` with
+`CDP_API_KEY_ID` and `CDP_API_KEY_SECRET` (or `COINBASE_API_KEY_NAME` and
+`COINBASE_API_PRIVATE_KEY`). Keep this file outside the checkout. Both P-256 PEM
+and base64 Ed25519 seed/key-pair formats are supported, following Coinbase's
+[official SDK signing implementation](https://github.com/coinbase/coinbase-advanced-py/blob/master/coinbase/jwt_generator.py).
+On September 5, 2026, live authenticated accounts/balances, open orders, fills,
+and filled-order history reads passed. This does not authorize or prove trading
+or money movement. History responses remain bounded to the requested page.
 
 Existing Positions/Orders views read source-tagged JINX positions/P&L and
 ATLAS positions/orders through /kayjay/data. Unavailable sources remain
 unavailable; no global total is invented from incomplete account coverage.
 Coinbase read-only accounts, open-order page and fill page use the documented
-Advanced Trade API with short-lived P-256 signed JWTs. Environment names are
+Advanced Trade API with short-lived P-256 or Ed25519 signed JWTs. Environment names are
 COINBASE_API_KEY_NAME / COINBASE_API_PRIVATE_KEY (or CDP_API_KEY_ID /
-CDP_API_KEY_SECRET), loaded through the existing Bluelights credential loader.
+CDP_API_KEY_SECRET), loaded from the local eTape credential file described above.
 Never put values in this repository. Orders/fills are explicitly bounded pages.
 The account adapter rejects order-placement paths and does not bypass engines.
 
