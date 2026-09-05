@@ -28,6 +28,36 @@ type PaymentResult = {
   order?:{orderId?:string;status?:string;paymentTotal?:string;paymentCurrency?:string;purchaseAmount?:string;purchaseCurrency?:string;fees?:{amount?:string;currency?:string}[]};
 };
 
+type CashoutRail = {rail?:string;label?:string;candidate?:boolean;reason?:string;paymentMethodId?:string|null;methodType?:string;requiresSession?:boolean};
+type CashoutState = {error?:string;authenticated?:boolean;country?:string|null;rails?:Record<string,CashoutRail>;selection?:{selected?:string|null;rail?:CashoutRail;error?:string;code?:string}|null};
+
+// Read-only Coinbase cash-out rail discovery. Nothing here moves money — the
+// payout itself is OWNER LIVE VERIFY REQUIRED.
+function CashoutRails(): JSX.Element {
+  const [state,setState]=useState<CashoutState|null>(null);
+  const [busy,setBusy]=useState(false);
+  async function load() {
+    if(busy)return; setBusy(true);
+    try {
+      const response=await fetch("/kayjay/payments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"cashout_rails",input:{instantOnly:true}}),signal:AbortSignal.timeout(12000)});
+      setState(await response.json() as CashoutState);
+    } catch { setState({error:"Coinbase cash-out discovery is unavailable. No rail is confirmed."}); }
+    finally { setBusy(false); }
+  }
+  const order=["instantCard","rtp","paypal","cdpOfframp"];
+  return <details><summary>Cash out · Coinbase rails{state?.selection?.selected?` · best: ${state.selection.selected}`:""}</summary>
+    <p>Coinbase is the only cash-out provider. Rails are discovered from your real Coinbase payment methods; a payout is an owner action.</p>
+    <button disabled={busy} onClick={()=>void load()}>{busy?"Checking…":"Discover rails"}</button>
+    {state?.error&&<p role="alert">{state.error}</p>}
+    {state&&!state.error&&<>
+      <p>Coinbase auth: {state.authenticated?"authenticated":"not authenticated"}{state.country?` · ${state.country}`:""}</p>
+      <table style={{width:"100%"}}><thead><tr><th>Rail</th><th>Eligible</th><th>Detail</th></tr></thead>
+        <tbody>{order.map(key=>{const r=state.rails?.[key];return <tr key={key}><td>{r?.label??key}</td><td>{r?.candidate?"Yes":"No"}</td><td>{r?.reason??"Unknown"}</td></tr>;})}</tbody></table>
+      {state.selection?.error?<p role="alert">{state.selection.error}</p>:state.selection?.selected&&<p>Selected instant rail: <strong>{state.selection.selected}</strong> — a payout requires owner confirmation (OWNER LIVE VERIFY REQUIRED).</p>}
+    </>}
+  </details>;
+}
+
 // Coinbase Onramp / Apple Pay sandbox funding. Coinbase is the sole payment
 // provider. Cash-out (Coinbase off-ramp rails) is a separate control.
 function SandboxPayments(): JSX.Element {
@@ -217,6 +247,7 @@ export function KayjayPanel({config}: PanelProps): JSX.Element {
     {tab==="Settings" && <p>Use Settings in the top bar for the existing eTape settings. Engine authority is controlled in its own system view.</p>}
     {tab==="Accounts" && <>
       <SandboxPayments/>
+      <CashoutRails/>
       <details><summary>Coinbase account · {coinbaseError?"STALE / UNAVAILABLE":coinbaseAccount?.state??"Checking"}</summary>
         <p>Read only · Refreshes every 30 seconds while Accounts is open.</p>
         {coinbaseError&&<p role="alert">Coinbase refresh failed. Retained data is stale; account readiness is unknown.</p>}

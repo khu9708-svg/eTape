@@ -1,5 +1,6 @@
 import {coinbaseSnapshot,coinbaseCurrent,coinbaseJwt,coinbaseCredentials} from "./kayjay-coinbase.mjs";
 import {createPaymentAdapter,createFileIntentStore,PaymentError} from "./kayjay-payments.mjs";
+import {discoverCashoutRails,selectCashoutRail,CashoutError} from "./kayjay-cashout.mjs";
 import {homedir} from "node:os";
 import {createControlIntentStore,createControlForwarder,coordinateExitAll,controlCapabilities} from "./kayjay-control.mjs";
 import {connectionState,sourceData,requireLiveAccount} from "./kayjay-state.mjs";
@@ -40,6 +41,14 @@ export async function paymentAction(request,adapter=paymentAdapter()){
   case "fund_start":if(request.confirm!==true)throw new PaymentError("confirmation_required","Confirm the sandbox funding details first.");return adapter.coinbaseSandboxStart(input,intentId);
   case "fund_status":return adapter.coinbaseStatus(input.orderId);
   case "reconcile":return adapter.reconcileIntent(intentId);
+  case "cashout_rails":{
+   // Read-only rail discovery from real Coinbase payment methods. No payout.
+   const state=await discoverCashoutRails();
+   let selection=null;
+   try{selection=selectCashoutRail(state,{instantOnly:input.instantOnly!==false});}
+   catch(error){if(!(error instanceof CashoutError))throw error;selection={error:error.message,code:error.code};}
+   return {...state,selection};
+  }
   default:throw new PaymentError("unsupported_action","Unsupported payment action.");
  }
 }
