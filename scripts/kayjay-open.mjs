@@ -12,7 +12,8 @@ try {
  const {targetInfos}=await call("Target.getTargets");
  let targetId=targetInfos.find(t=>t.type==="page"&&t.url===url)?.targetId;
  if(!targetId)({targetId}=await call("Target.createTarget",{url,newWindow:true}));
- const {windowId}=await call("Browser.getWindowForTarget",{targetId});
+ const {windowId,bounds}=await call("Browser.getWindowForTarget",{targetId});
+ if(bounds.windowState==="minimized") await call("Browser.setWindowBounds",{windowId,bounds:{windowState:"normal"}});
  await call("Browser.setWindowBounds",{windowId,bounds:{windowState:"fullscreen"}});
  const {sessionId}=await call("Target.attachToTarget",{targetId,flatten:true});
  await call("Page.reload",{ignoreCache:true},sessionId);
