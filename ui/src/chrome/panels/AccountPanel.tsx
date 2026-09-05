@@ -316,7 +316,7 @@ function StatsStrip({
   const cell = (label: string, testid: string, value: string, tone?: number) => (
     <div style={{ display: "flex", flexDirection: "column", padding: "2px 10px" }}>
       <span style={{ fontSize: 10, color: palette.textMuted }}>{label}</span>
-      <span data-testid={testid} className="mono" style={{ fontSize: 13, color: tone === undefined ? palette.text : tone >= 0 ? palette.up : palette.down }}>{value}</span>
+      <span data-testid={testid} className="mono" style={{ fontSize: 13, whiteSpace: "nowrap", color: tone === undefined ? palette.text : tone >= 0 ? palette.up : palette.down }}>{value}</span>
     </div>
   );
 
@@ -328,8 +328,6 @@ function StatsStrip({
       {cell("Day P&L", "acct-daypnl", money(dayPnl), dayPnl ?? 0)}
       {cell("Unrealized", "acct-unrealized", money(unrealized), unrealized)}
       {cell("Realized", "acct-realized", money(realized), realized ?? 0)}
-      {account && <span data-testid="acct-pnl-source" title={account.dayPnlProvisional ? "Since startup; prior trading-close baseline was unavailable" : account.dayPnlSource === "calculated" ? "Calculated" : "Broker reported"}
-        style={{ fontSize: 10, color: palette.textMuted }}>{account.dayPnlProvisional ? "Since startup" : account.dayPnlSource === "calculated" ? "Calculated" : "Broker reported"}</span>}
       {stale && account && <span data-testid="acct-stale" style={{ fontSize: 10, color: palette.warn }} title={`Last account update ${formatEtDateTime(account.tsMs)}`}>Stale · {formatEtDateTime(account.tsMs)}</span>}
       <div style={{ flex: 1 }} />
     </div>
