@@ -8,6 +8,8 @@ import {createControlIntentStore,createControlForwarder,coordinateExitAll,contro
 import {translateForVenue,RiskError} from "./kayjay-risk.mjs";
 import {createFlattenSchedule,ScheduleError} from "./kayjay-schedule.mjs";
 import {createJinxExitAllAuthority} from "./kayjay-exitall-jinx.mjs";
+import {createAtlasExitAllAuthority} from "./kayjay-exitall-atlas.mjs";
+import {createVenueReconciler} from "./kayjay-reconcile.mjs";
 import {connectionState,sourceData,requireLiveAccount} from "./kayjay-state.mjs";
 import {discover,tokenCandles} from "./kayjay-discovery.mjs";
 import {marketSnapshot} from "./kayjay-market.mjs";
@@ -27,6 +29,24 @@ let payments;
 const controlStore=createControlIntentStore(path.join(homedir(),".eTape"));
 const controls=createControlForwarder({store:controlStore});
 const flattenSchedule=createFlattenSchedule(path.join(homedir(),".eTape","flatten-schedule.json"));
+const venueReconciler=createVenueReconciler({
+ file:path.join(homedir(),".eTape","venue-reconcile.json"),
+ lookups:{
+  async ATLAS(ref){
+   const r=await fetch(`http://127.0.0.1:8080/api/orders/${encodeURIComponent(ref)}`,{signal:AbortSignal.timeout(8000)}).then(x=>x.json());
+   if(r.error)throw new Error(r.error);
+   return {state:r.status,detail:{filled_qty:r.filled_qty}};
+  },
+  async COINBASE(ref){
+   const t=await coinbaseTrader().getOrder(ref);
+   return {state:t.state,detail:{coinbaseStatus:t.coinbaseStatus}};
+  },
+  async JINX(_ref){
+   const r=await fetch("http://127.0.0.1:8794/exit-all/reconcile",{signal:AbortSignal.timeout(8000)}).then(x=>x.json());
+   return {state:r.confirmed?"filled":"needs_reconciliation",detail:{positions:r.positions?.length??null}};
+  },
+ },
+});
 export async function controlAction(request,forwarder=controls,schedule=flattenSchedule){
  switch(request.action){
   case "jinx_order":return forwarder.manualJinx(request);
@@ -39,9 +59,22 @@ export async function controlAction(request,forwarder=controls,schedule=flattenS
    const venues=Array.isArray(request.venues)?request.venues:[];
    const authorities={};
    if(venues.includes("JINX"))authorities.JINX=await createJinxExitAllAuthority({intentId:request.id});
-   return coordinateExitAll(request,{store:controlStore,authorities});
+   if(venues.includes("ATLAS"))authorities.ATLAS=await createAtlasExitAllAuthority({intentId:request.id});
+   const outcome=await coordinateExitAll(request,{store:controlStore,authorities});
+   // Record each requested venue leg into the unified reconciler so a later
+   // reconcile_intent can prove per-venue state after the coordinator returns.
+   try{
+    for(const v of Object.keys(authorities)){
+     const venueRes=Array.isArray(outcome.venues)?outcome.venues.find(x=>x.venue===v):null;
+     venueReconciler.record(request.id,v,{state:venueRes?.reconciled?"filled":venueRes?.status==="unsupported"?"rejected":"needs_reconciliation"});
+    }
+   }catch{/* reconciler recording is best-effort; the coordinator result is authoritative */}
+   return outcome;
   }
   case "priority":return resolveControlPriority(request.input||{});
+  case "reconcile_record":return venueReconciler.record(request.input?.intentId,request.input?.venue,request.input||{});
+  case "reconcile_intent":return venueReconciler.reconcile(request.input?.intentId);
+  case "reconcile_get":return venueReconciler.get(request.input?.intentId)??{error:"not_found"};
   case "risk_translate":{
    const venue=String(request.input?.venue||"").toUpperCase();
    return translateForVenue(request.input?.contract||{},venue);
