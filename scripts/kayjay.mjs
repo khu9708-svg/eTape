@@ -302,11 +302,16 @@ export function createCockpitServer() {
       res.setHeader("Cache-Control","no-store");res.setHeader("Content-Type","application/json");
       if(req.headers.origin!==origin||!req.headers["content-type"]?.startsWith("application/json")){res.writeHead(403);return res.end();}
       const withdraw=req.url.endsWith("withdraw");
+      let b;
+      try{let body="";for await(const chunk of req){body+=chunk;if(Buffer.byteLength(body)>4096)throw new Error("request too large");}b=JSON.parse(body);}
+      catch{res.writeHead(400);return res.end(JSON.stringify({error:"invalid JSON body"}));}
       if(withdraw&&b.confirm!==true){res.writeHead(400);return res.end(JSON.stringify({error:"withdrawal requires confirm:true after review"}));}
+      if(withdraw&&(typeof b.idempotencyKey!=="string"||!b.idempotencyKey)){res.writeHead(400);return res.end(JSON.stringify({error:"withdrawal requires a stable idempotencyKey minted by the owner surface"}));}
       try{
         const r=await fetch(`http://127.0.0.1:8794/wallet/${withdraw?"withdraw":"quote"}`,{
           method:"POST",headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({destination:b.destination,amountLamports:b.amountLamports,...(withdraw?{confirm:true}:{})}),
+          // forward the owner-minted idempotency key unchanged — the worker/signer dedupes on it
+          body:JSON.stringify({destination:b.destination,amountLamports:b.amountLamports,...(withdraw?{confirm:true,idempotencyKey:b.idempotencyKey}:{})}),
           signal:AbortSignal.timeout(withdraw?30000:9000),
         });
         return res.end(JSON.stringify(await r.json()));

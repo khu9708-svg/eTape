@@ -19,6 +19,7 @@ import {
   stepsForPhase,
   type OwnerActionPhase,
 } from "./confirmFlow";
+import { mintWithdrawKey, clearWithdrawKey } from "./withdrawKey";
 
 type JinxWallet = {
   error?: string;
@@ -97,7 +98,8 @@ function WalletPanel(): JSX.Element {
 // the existing /kayjay/wallet/quote and /kayjay/wallet/withdraw proxies. No
 // backend logic here — the JINX worker's wallet-ops.mjs is the only signer.
 type WithdrawQuote = { error?: string; from?: string; destination?: string; amountSol?: number; estimatedFeeSol?: number; balanceAfterSol?: number; isMax?: boolean };
-type WithdrawResult = { error?: string; ok?: boolean; signature?: string; explorerUrl?: string; amountSol?: number; destination?: string };
+type WithdrawResult = { error?: string; ok?: boolean; signature?: string; explorerUrl?: string; amountSol?: number; destination?: string; idempotentReplay?: boolean };
+
 
 function JinxWithdrawPanel(): JSX.Element {
   const [phase, setPhase] = useState<OwnerActionPhase>("enter");
@@ -129,10 +131,12 @@ function JinxWithdrawPanel(): JSX.Element {
   }
 
   async function submit() {
-    if (!isConfirmed({ checked: confirm })) return;
+    if (!isConfirmed({ checked: confirm }) || !lamports || !destination) return;
     setPhase("confirming"); setMsg("");
+    // Same key for every attempt at THIS reviewed withdrawal, incl. reload/UNKNOWN.
+    const idempotencyKey = mintWithdrawKey(destination, lamports);
     try {
-      const r = await fetch("/kayjay/wallet/withdraw", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ destination, amountLamports: lamports, confirm: true }), signal: AbortSignal.timeout(35000) });
+      const r = await fetch("/kayjay/wallet/withdraw", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ destination, amountLamports: lamports, confirm: true, idempotencyKey }), signal: AbortSignal.timeout(35000) });
       const w = await r.json() as WithdrawResult;
       if (!r.ok || w.error) {
         setResult(w);
@@ -141,14 +145,23 @@ function JinxWithdrawPanel(): JSX.Element {
         return;
       }
       setResult(w); setPhase("success");
-      setMsg("Withdrawal confirmed on-chain. Verify the signature on the explorer.");
+      clearWithdrawKey();
+      setMsg(w.idempotentReplay
+        ? "This withdrawal was already submitted — showing the original confirmed signature (no second transfer)."
+        : "Withdrawal confirmed on-chain. Verify the signature on the explorer.");
     } catch {
       setPhase("unknown");
-      setMsg("Withdrawal outcome is UNKNOWN — the transaction may have reached the chain. Do NOT retry. Check the explorer / JINX wallet activity first.");
+      setMsg("Withdrawal outcome is UNKNOWN — the transaction may have reached the chain. Do NOT retry with a new withdrawal. Re-confirm this same screen to reconcile, or check the explorer / JINX wallet activity first.");
     }
   }
 
-  function reset() { setPhase("enter"); setQuote(null); setResult(null); setConfirm(false); setMsg(""); }
+  function reset() {
+    // Keep the active key across an UNKNOWN/failed outcome so a re-entry of the
+    // same destination+amount reconciles instead of double-sending. A reset from
+    // a safe phase is a genuinely new action — drop it.
+    if (phase !== "unknown" && phase !== "failed") clearWithdrawKey();
+    setPhase("enter"); setQuote(null); setResult(null); setConfirm(false); setMsg("");
+  }
 
   const steps = stepsForPhase(phase, ["Enter & review", "Confirm", "Submit", "Confirmed on-chain"]);
   return <details><summary>JINX Withdraw{phase === "success" ? " · confirmed" : phase === "unknown" ? " · UNKNOWN" : phase === "failed" ? " · failed" : ""}</summary>
