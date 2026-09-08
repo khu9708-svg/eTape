@@ -317,6 +317,24 @@ export function createCockpitServer() {
         return res.end(JSON.stringify(await r.json()));
       }catch{res.writeHead(withdraw?504:502);return res.end(JSON.stringify({error:withdraw?"Withdrawal outcome is UNKNOWN — the request may have reached the chain. Do not retry; check the JINX wallet activity / a block explorer before any further action.":"JINX wallet quote unavailable."}));}
     }
+    if(req.method==="POST"&&req.url==="/kayjay/wallet/reconcile"){
+      // Thin proxy: asks the JINX signer to resolve an UNKNOWN withdrawal by
+      // querying the chain for its exact expected signature. Never sends funds.
+      res.setHeader("Cache-Control","no-store");res.setHeader("Content-Type","application/json");
+      if(req.headers.origin!==origin||!req.headers["content-type"]?.startsWith("application/json")){res.writeHead(403);return res.end();}
+      let b;
+      try{let body="";for await(const chunk of req){body+=chunk;if(Buffer.byteLength(body)>2048)throw new Error("request too large");}b=JSON.parse(body);}
+      catch{res.writeHead(400);return res.end(JSON.stringify({error:"invalid JSON body"}));}
+      if(typeof b.idempotencyKey!=="string"||!b.idempotencyKey){res.writeHead(400);return res.end(JSON.stringify({error:"reconcile requires the original idempotencyKey"}));}
+      try{
+        const r=await fetch("http://127.0.0.1:8794/wallet/reconcile",{
+          method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({idempotencyKey:b.idempotencyKey}),
+          signal:AbortSignal.timeout(20000),
+        });
+        return res.end(JSON.stringify(await r.json()));
+      }catch{res.writeHead(502);return res.end(JSON.stringify({state:"UNKNOWN",error:"JINX wallet reconcile endpoint unavailable. Outcome remains UNKNOWN; do not resend."}));}
+    }
     if(req.method==="POST"&&req.url==="/kayjay/trade"){
       res.setHeader("Cache-Control","no-store");res.setHeader("Content-Type","application/json");
       if(req.headers.origin!==origin||!req.headers["content-type"]?.startsWith("application/json")){res.writeHead(403);return res.end();}

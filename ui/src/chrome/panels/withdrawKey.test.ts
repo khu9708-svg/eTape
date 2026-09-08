@@ -1,8 +1,14 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
-import { mintWithdrawKey, clearWithdrawKey } from "./withdrawKey";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  mintWithdrawKey,
+  clearWithdrawKey,
+  withdrawKeyStorageOk,
+  WithdrawKeyStorageError,
+} from "./withdrawKey";
 
 afterEach(() => {
+  vi.restoreAllMocks();
   clearWithdrawKey();
 });
 
@@ -35,5 +41,19 @@ describe("withdraw idempotency key", () => {
 
   it("keys match the worker's accepted format", () => {
     expect(mintWithdrawKey("DeStAddr1111", 5_000)).toMatch(/^[\w.:-]{8,128}$/);
+  });
+
+  it("THROWS (never returns an ephemeral key) when storage cannot retain it", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("QuotaExceededError");
+    });
+    expect(withdrawKeyStorageOk()).toBe(false);
+    expect(() => mintWithdrawKey("DeStAddr1111", 5_000)).toThrow(WithdrawKeyStorageError);
+  });
+
+  it("THROWS when a write silently does not persist", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {});
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => null);
+    expect(() => mintWithdrawKey("DeStAddr1111", 5_000)).toThrow(WithdrawKeyStorageError);
   });
 });

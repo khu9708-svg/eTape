@@ -19,7 +19,7 @@ import {
   stepsForPhase,
   type OwnerActionPhase,
 } from "./confirmFlow";
-import { mintWithdrawKey, clearWithdrawKey } from "./withdrawKey";
+import { mintWithdrawKey, clearWithdrawKey, withdrawKeyStorageOk, WithdrawKeyStorageError } from "./withdrawKey";
 
 type JinxWallet = {
   error?: string;
@@ -132,9 +132,20 @@ function JinxWithdrawPanel(): JSX.Element {
 
   async function submit() {
     if (!isConfirmed({ checked: confirm }) || !lamports || !destination) return;
+    // A fund-moving action requires a durably-retained idempotency key. If we
+    // cannot store one, do NOT submit — an ephemeral key a reload/retry can't
+    // recover is worse than not sending.
+    let idempotencyKey: string;
+    try {
+      idempotencyKey = mintWithdrawKey(destination, lamports);
+    } catch (e) {
+      setPhase("failed");
+      setMsg(e instanceof WithdrawKeyStorageError
+        ? "IDEMPOTENCY STORAGE UNAVAILABLE — WITHDRAWAL BLOCKED. This browser can't durably remember the withdrawal key; a retry could double-send. Enable site storage (leave private mode) and try again."
+        : "Could not prepare the withdrawal.");
+      return;
+    }
     setPhase("confirming"); setMsg("");
-    // Same key for every attempt at THIS reviewed withdrawal, incl. reload/UNKNOWN.
-    const idempotencyKey = mintWithdrawKey(destination, lamports);
     try {
       const r = await fetch("/kayjay/wallet/withdraw", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ destination, amountLamports: lamports, confirm: true, idempotencyKey }), signal: AbortSignal.timeout(35000) });
       const w = await r.json() as WithdrawResult;
@@ -151,7 +162,32 @@ function JinxWithdrawPanel(): JSX.Element {
         : "Withdrawal confirmed on-chain. Verify the signature on the explorer.");
     } catch {
       setPhase("unknown");
-      setMsg("Withdrawal outcome is UNKNOWN — the transaction may have reached the chain. Do NOT retry with a new withdrawal. Re-confirm this same screen to reconcile, or check the explorer / JINX wallet activity first.");
+      setMsg("Withdrawal outcome is UNKNOWN — the transaction may have reached the chain. Do NOT start a new withdrawal. Use “Reconcile” to have JINX query the chain for this exact transaction.");
+    }
+  }
+
+  async function reconcile() {
+    if (!lamports || !destination) return;
+    let idempotencyKey: string;
+    try { idempotencyKey = mintWithdrawKey(destination, lamports); }
+    catch { setMsg("Cannot reconcile: the withdrawal key is not durably stored in this browser."); return; }
+    setPhase("confirming"); setMsg("Asking JINX to check the chain for this exact transaction…");
+    try {
+      const r = await fetch("/kayjay/wallet/reconcile", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idempotencyKey }), signal: AbortSignal.timeout(20000) });
+      const w = await r.json() as { state?: string; error?: string; result?: WithdrawResult };
+      if (w.state === "CONFIRMED" && w.result) {
+        setResult(w.result); setPhase("success"); clearWithdrawKey();
+        setMsg("Reconciled: the transaction confirmed on-chain. No second transfer was sent.");
+      } else if (w.state === "NOT_SUBMITTED" || w.state === "NONE") {
+        clearWithdrawKey(); setPhase("failed");
+        setMsg("Reconciled: this transaction was never accepted by the chain. It is safe to start the withdrawal again.");
+      } else if (w.state === "PENDING") {
+        setPhase("unknown"); setMsg("Still pending — the transaction may yet land. Do not resend; reconcile again shortly.");
+      } else {
+        setPhase("unknown"); setMsg(w.error ?? "Still UNKNOWN — the network was unreachable. Try reconcile again; never resend.");
+      }
+    } catch {
+      setPhase("unknown"); setMsg("Reconcile request failed. Outcome remains UNKNOWN; do not resend.");
     }
   }
 
@@ -164,8 +200,10 @@ function JinxWithdrawPanel(): JSX.Element {
   }
 
   const steps = stepsForPhase(phase, ["Enter & review", "Confirm", "Submit", "Confirmed on-chain"]);
+  const storageOk = withdrawKeyStorageOk();
   return <details><summary>JINX Withdraw{phase === "success" ? " · confirmed" : phase === "unknown" ? " · UNKNOWN" : phase === "failed" ? " · failed" : ""}</summary>
     <p>Move SOL from the JINX execution wallet (D5f) to a destination — normally the Phantom owner wallet. The JINX worker's local keypair is the only signer; this screen never signs.</p>
+    {!storageOk && <p role="alert">IDEMPOTENCY STORAGE UNAVAILABLE — withdrawals are blocked in this browser. Leave private mode / enable site storage.</p>}
     <ProgressSteps steps={steps} />
 
     {(phase === "enter" || phase === "reviewing") && <fieldset disabled={phase === "reviewing"} style={{ border: 0, padding: 0 }}>
@@ -181,7 +219,7 @@ function JinxWithdrawPanel(): JSX.Element {
       <ReviewRow label="Network fee (est.)" value={`${quote.estimatedFeeSol} SOL`} />
       <ReviewRow label="Signer balance after" value={`${quote.balanceAfterSol} SOL`} />
       <OwnerConfirmGate label="I confirm this on-chain withdrawal." checked={confirm} onCheckedChange={setConfirm} />
-      <button disabled={!isConfirmed({ checked: confirm })} onClick={() => void submit()}>Confirm & withdraw</button>
+      <button disabled={!isConfirmed({ checked: confirm }) || !storageOk} onClick={() => void submit()}>Confirm & withdraw</button>
       <button style={{ marginLeft: 8 }} onClick={reset}>Back</button>
     </div>}
 
@@ -190,8 +228,9 @@ function JinxWithdrawPanel(): JSX.Element {
     {(phase === "success" || phase === "failed" || phase === "unknown") && <div>
       {result?.signature && <ReviewRow label="Signature" value={<code>{result.signature}</code>} />}
       {result?.explorerUrl && <p><a href={result.explorerUrl} target="_blank" rel="noopener noreferrer">Open on Solscan</a></p>}
-      {phase === "unknown" && <p role="alert">Automatic retries are disabled. Check the explorer before any further action.</p>}
-      <button onClick={reset}>New withdrawal</button>
+      {phase === "unknown" && <p role="alert">This is NOT a failure. Never start a new withdrawal from here — reconcile it.</p>}
+      {phase === "unknown" && <button onClick={() => void reconcile()}>Reconcile (query the chain)</button>}
+      <button style={{ marginLeft: phase === "unknown" ? 8 : 0 }} onClick={reset}>{phase === "unknown" ? "Dismiss" : "New withdrawal"}</button>
     </div>}
 
     {msg && <p role={phase === "unknown" || phase === "failed" ? "alert" : "status"}>{msg}</p>}
