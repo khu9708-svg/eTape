@@ -167,3 +167,37 @@ test("exit_all_preview is read-only and returns per-venue supported + counts",as
  assert.equal(out.venues.RAPTOR15.supported,false);
  assert.match(out.venues.RAPTOR15.reason,/no EXIT ALL authority/);
 });
+
+test("wallet/withdraw proxy fails closed without an owner-minted idempotencyKey", async () => {
+  const server = createCockpitServer();
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const post = (port, body) =>
+    new Promise((resolve, reject) => {
+      const payload = JSON.stringify(body);
+      const r = http.request(
+        { host: "127.0.0.1", port, path: "/kayjay/wallet/withdraw", method: "POST",
+          headers: { host: "127.0.0.1:8687", origin: "http://127.0.0.1:8687",
+            "content-type": "application/json", "content-length": Buffer.byteLength(payload) } },
+        (res) => { let d = ""; res.on("data", (c) => (d += c)); res.on("end", () => resolve({ status: res.statusCode, body: d })); },
+      );
+      r.on("error", reject);
+      r.end(payload);
+    });
+  try {
+    const port = server.address().port;
+    // confirm:true but no idempotencyKey -> 400 BEFORE any call to the JINX worker
+    const res = await post(port, { destination: "SomeDest1111", amountLamports: 5000, confirm: true });
+    assert.equal(res.status, 400);
+    assert.match(JSON.parse(res.body).error, /idempotencyKey/);
+
+    // With a key + confirm the body IS parsed and the guards pass — it reaches
+    // the JINX worker (down in this test -> 504 UNKNOWN, never a keyless 400).
+    const withKey = await post(port, {
+      destination: "SomeDest1111", amountLamports: 5000, confirm: true, idempotencyKey: "wd-face-000001",
+    });
+    assert.equal(withKey.status, 504);
+    assert.match(JSON.parse(withKey.body).error, /UNKNOWN/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
